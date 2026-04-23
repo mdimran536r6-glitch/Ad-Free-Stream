@@ -163,6 +163,55 @@ export function pipedChannel(channelId: string) {
   return pipedFetch<PipedChannel>(`/channel/${channelId}`);
 }
 
+export interface PipedPlaylistDetails {
+  name: string;
+  thumbnailUrl: string;
+  bannerUrl?: string;
+  uploader: string;
+  uploaderAvatar?: string;
+  uploaderUrl?: string;
+  videos: number;
+  relatedStreams: PipedStreamItem[];
+}
+
+export function pipedPlaylist(playlistId: string) {
+  return pipedFetch<PipedPlaylistDetails>(`/playlists/${playlistId}`);
+}
+
+export function mediaProxy(url: string): string {
+  if (Platform.OS !== "web") return url;
+  if (!url) return url;
+  return `${apiRoot()}/proxy?url=${encodeURIComponent(url)}`;
+}
+
+export function timeAgo(input?: string | number | null): string {
+  if (!input) return "";
+  let ts: number;
+  if (typeof input === "number") {
+    ts = input;
+  } else {
+    const parsed = Date.parse(input);
+    if (isNaN(parsed)) return input;
+    ts = parsed;
+  }
+  const diff = Date.now() - ts;
+  if (diff < 0) return "just now";
+  const sec = Math.floor(diff / 1000);
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 7) return `${day}d ago`;
+  const wk = Math.floor(day / 7);
+  if (wk < 5) return `${wk}w ago`;
+  const mo = Math.floor(day / 30);
+  if (mo < 12) return `${mo}mo ago`;
+  const yr = Math.floor(day / 365);
+  return `${yr}y ago`;
+}
+
 export function formatDuration(seconds: number): string {
   if (!seconds || seconds < 0) return "0:00";
   const h = Math.floor(seconds / 3600);

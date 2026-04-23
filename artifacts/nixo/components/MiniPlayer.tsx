@@ -1,9 +1,10 @@
 import { Feather } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { useRouter } from "expo-router";
-import React from "react";
+import React, { useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 
+import { VideoActionSheet } from "@/components/VideoActionSheet";
 import { usePlayer } from "@/contexts/PlayerContext";
 import { useColors } from "@/hooks/useColors";
 
@@ -11,6 +12,7 @@ export function MiniPlayer() {
   const { current, isPlaying, isLoading, toggle, stop, position, duration } = usePlayer();
   const colors = useColors();
   const router = useRouter();
+  const [menu, setMenu] = useState(false);
   if (!current) return null;
   const progress = duration > 0 ? Math.min(100, (position / duration) * 100) : 0;
 
@@ -36,9 +38,21 @@ export function MiniPlayer() {
           <Feather name={isPlaying ? "pause" : "play"} size={22} color={colors.foreground} />
         )}
       </Pressable>
-      <Pressable hitSlop={10} onPress={stop} style={styles.btn}>
-        <Feather name="x" size={20} color={colors.mutedForeground} />
+      <Pressable hitSlop={10} onPress={(e) => { e.stopPropagation(); setMenu(true); }} style={styles.btn}>
+        <Feather name="more-vertical" size={20} color={colors.mutedForeground} />
       </Pressable>
+      <Pressable hitSlop={10} onPress={(e) => { e.stopPropagation(); stop(); }} style={styles.btn}>
+        <Feather name="x" size={18} color={colors.mutedForeground} />
+      </Pressable>
+      <VideoActionSheet
+        visible={menu}
+        onClose={() => setMenu(false)}
+        videoId={current.videoId}
+        title={current.title}
+        artist={current.artist}
+        thumbnail={current.thumbnail}
+        duration={duration}
+      />
     </Pressable>
   );
 }

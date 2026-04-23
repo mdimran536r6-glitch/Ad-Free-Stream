@@ -23,8 +23,10 @@ import {
   extractChannelId,
   formatDuration,
   formatViews,
+  mediaProxy,
   pickVideoStream,
   pipedStream,
+  timeAgo,
 } from "@/lib/piped";
 
 export default function VideoScreen() {
@@ -44,9 +46,9 @@ export default function VideoScreen() {
 
   const sourceUri = useMemo(() => {
     if (!stream.data) return null;
-    if (stream.data.hls) return stream.data.hls;
+    if (stream.data.hls) return mediaProxy(stream.data.hls);
     const v = pickVideoStream(stream.data.videoStreams ?? [], 480);
-    return v?.url ?? null;
+    return v?.url ? mediaProxy(v.url) : null;
   }, [stream.data]);
 
   const player = useVideoPlayer(sourceUri ?? null, (p) => {
@@ -73,10 +75,22 @@ export default function VideoScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background, paddingTop: insets.top }}>
-      <View style={styles.headerRow}>
-        <Pressable hitSlop={10} onPress={() => router.back()} style={styles.iconBtn}>
-          <Feather name="arrow-left" size={22} color={colors.foreground} />
+      <View style={styles.videoBox}>
+        {sourceUri ? (
+          <VideoView player={player} style={styles.video} contentFit="contain" nativeControls />
+        ) : data ? (
+          <Image source={{ uri: data.thumbnailUrl }} style={styles.video} contentFit="cover" />
+        ) : (
+          <View style={[styles.video, styles.center]}>
+            <ActivityIndicator color="#fff" />
+          </View>
+        )}
+        <Pressable hitSlop={12} onPress={() => router.back()} style={styles.backOverlay}>
+          <Feather name="chevron-down" size={24} color="#fff" />
         </Pressable>
+      </View>
+
+      <View style={styles.actionsRow}>
         <View style={{ flex: 1 }} />
         <Pressable
           hitSlop={10}
@@ -88,23 +102,11 @@ export default function VideoScreen() {
           }}
           style={styles.iconBtn}
         >
-          <Feather name="headphones" size={22} color={colors.foreground} />
+          <Feather name="headphones" size={20} color={colors.foreground} />
         </Pressable>
         <Pressable hitSlop={10} onPress={() => setMenuOpen(true)} style={styles.iconBtn}>
-          <Feather name="more-vertical" size={22} color={colors.foreground} />
+          <Feather name="more-vertical" size={20} color={colors.foreground} />
         </Pressable>
-      </View>
-
-      <View style={styles.videoBox}>
-        {sourceUri ? (
-          <VideoView player={player} style={styles.video} contentFit="contain" nativeControls />
-        ) : data ? (
-          <Image source={{ uri: data.thumbnailUrl }} style={styles.video} contentFit="cover" />
-        ) : (
-          <View style={[styles.video, styles.center]}>
-            <ActivityIndicator color="#fff" />
-          </View>
-        )}
       </View>
 
       {stream.isLoading || !data ? (
@@ -116,7 +118,7 @@ export default function VideoScreen() {
           <View style={styles.metaBox}>
             <Text style={[styles.title, { color: colors.foreground }]}>{data.title}</Text>
             <Text style={[styles.subMeta, { color: colors.mutedForeground }]}>
-              {formatViews(data.views)} · {formatDuration(data.duration)}
+              {formatViews(data.views)} · {timeAgo(data.uploadDate)} · {formatDuration(data.duration)}
             </Text>
           </View>
 
@@ -163,9 +165,15 @@ export default function VideoScreen() {
 }
 
 const styles = StyleSheet.create({
-  headerRow: { flexDirection: "row", alignItems: "center", paddingHorizontal: 4, paddingVertical: 4 },
+  actionsRow: { flexDirection: "row", alignItems: "center", paddingHorizontal: 4, paddingVertical: 4 },
   iconBtn: { padding: 10 },
-  videoBox: { width: "100%", aspectRatio: 16 / 9, backgroundColor: "#000" },
+  videoBox: { width: "100%", aspectRatio: 16 / 9, backgroundColor: "#000", position: "relative" },
+  backOverlay: {
+    position: "absolute", top: 8, left: 8,
+    width: 38, height: 38, borderRadius: 19,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    alignItems: "center", justifyContent: "center",
+  },
   video: { width: "100%", height: "100%" },
   center: { alignItems: "center", justifyContent: "center", padding: 40 },
   metaBox: { padding: 16, gap: 6 },

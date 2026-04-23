@@ -175,12 +175,15 @@ export default function HomeScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.background, paddingTop: insets.top + webTop }}>
       <View style={styles.topBar}>
-        <Text style={[styles.brand, { color: colors.primary }]}>Nixo</Text>
+        <View style={[styles.logoMark, { backgroundColor: colors.primary }]}>
+          <Feather name="play" size={11} color="#fff" />
+        </View>
+        <Text style={[styles.brand, { color: colors.foreground }]}>Nixo</Text>
         <View style={{ flex: 1 }}>
           <SearchBar />
         </View>
         <Pressable hitSlop={10} onPress={() => router.push("/(tabs)/files")} style={styles.iconBtn}>
-          <Feather name="user" size={22} color={colors.foreground} />
+          <Feather name="bookmark" size={20} color={colors.foreground} />
         </Pressable>
       </View>
 
@@ -272,8 +275,9 @@ function dedupe(items: PipedSearchItem[] | PipedStreamItem[], watched: Set<strin
 }
 
 const styles = StyleSheet.create({
-  topBar: { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, gap: 8, paddingTop: 4 },
-  brand: { fontSize: 20, fontFamily: "Inter_700Bold" },
+  topBar: { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, gap: 6, paddingTop: 4 },
+  logoMark: { width: 22, height: 22, borderRadius: 4, alignItems: "center", justifyContent: "center" },
+  brand: { fontSize: 17, fontFamily: "Inter_700Bold", letterSpacing: -0.3 },
   iconBtn: { padding: 6 },
   chipsRow: { paddingHorizontal: 12, paddingVertical: 12, gap: 8 },
   chip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8, marginRight: 8 },

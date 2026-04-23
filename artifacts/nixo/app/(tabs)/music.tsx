@@ -164,7 +164,13 @@ export default function MusicScreen() {
                   showsHorizontalScrollIndicator={false}
                   contentContainerStyle={styles.hList}
                   renderItem={({ item }) => (
-                    <View style={styles.albumCard}>
+                    <Pressable
+                      onPress={() => {
+                        const pid = item.url.replace(/^\/playlist\?list=/, "").replace(/^\//, "");
+                        router.push(`/playlist/${encodeURIComponent(pid)}`);
+                      }}
+                      style={styles.albumCard}
+                    >
                       <Image source={{ uri: item.thumbnail }} style={styles.albumArt} contentFit="cover" />
                       <Text numberOfLines={2} style={[styles.albumTitle, { color: colors.foreground }]}>
                         {item.name}
@@ -172,7 +178,7 @@ export default function MusicScreen() {
                       <Text numberOfLines={1} style={[styles.albumArtist, { color: colors.mutedForeground }]}>
                         {item.uploaderName ?? `${item.videos} songs`}
                       </Text>
-                    </View>
+                    </Pressable>
                   )}
                 />
               </>
@@ -215,12 +221,18 @@ export default function MusicScreen() {
                   showsHorizontalScrollIndicator={false}
                   contentContainerStyle={styles.hList}
                   renderItem={({ item }) => (
-                    <View style={styles.albumCard}>
+                    <Pressable
+                      onPress={() => {
+                        const pid = item.url.replace(/^\/playlist\?list=/, "").replace(/^\//, "");
+                        router.push(`/playlist/${encodeURIComponent(pid)}`);
+                      }}
+                      style={styles.albumCard}
+                    >
                       <Image source={{ uri: item.thumbnail }} style={styles.albumArt} contentFit="cover" />
                       <Text numberOfLines={2} style={[styles.albumTitle, { color: colors.foreground }]}>
                         {item.name}
                       </Text>
-                    </View>
+                    </Pressable>
                   )}
                 />
               </>

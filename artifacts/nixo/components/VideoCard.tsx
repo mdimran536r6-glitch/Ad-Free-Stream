@@ -6,7 +6,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { VideoActionSheet } from "@/components/VideoActionSheet";
 import { useColors } from "@/hooks/useColors";
-import { extractVideoId, formatDuration, formatViews, type PipedStreamItem } from "@/lib/piped";
+import { extractVideoId, formatDuration, formatViews, timeAgo, type PipedStreamItem } from "@/lib/piped";
 
 interface Props {
   item: PipedStreamItem;
@@ -52,6 +52,7 @@ export function VideoCard({ item, variant = "feed" }: Props) {
           </Text>
           <Text style={[styles.uploader, { color: colors.mutedForeground }]} numberOfLines={1}>
             {item.uploaderName}
+            {item.uploadedDate ? ` · ${timeAgo(item.uploadedDate)}` : ""}
           </Text>
         </Pressable>
         {sheet}
@@ -80,6 +81,7 @@ export function VideoCard({ item, variant = "feed" }: Props) {
             </Text>
             <Text numberOfLines={1} style={[styles.uploader, { color: colors.mutedForeground }]}>
               {item.uploaderName} · {formatViews(item.views)}
+              {item.uploadedDate ? ` · ${timeAgo(item.uploadedDate)}` : ""}
             </Text>
           </View>
           <Pressable hitSlop={10} onPress={(e) => { e.stopPropagation(); setMenuOpen(true); }} style={styles.iconBtn}>
@@ -118,6 +120,7 @@ export function VideoCard({ item, variant = "feed" }: Props) {
             </Text>
             <Text numberOfLines={1} style={[styles.feedSub, { color: colors.mutedForeground }]}>
               {item.uploaderName} · {formatViews(item.views)}
+              {item.uploadedDate ? ` · ${timeAgo(item.uploadedDate)}` : ""}
             </Text>
           </View>
           <Pressable hitSlop={10} onPress={(e) => { e.stopPropagation(); setMenuOpen(true); }} style={styles.iconBtn}>

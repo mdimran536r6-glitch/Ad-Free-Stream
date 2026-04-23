@@ -6,6 +6,9 @@ import React from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { useState } from "react";
+
+import { VideoActionSheet } from "@/components/VideoActionSheet";
 import { useLibrary } from "@/contexts/LibraryContext";
 import { usePlayer } from "@/contexts/PlayerContext";
 import { useColors } from "@/hooks/useColors";
@@ -17,6 +20,7 @@ export default function PlayerScreen() {
   const router = useRouter();
   const { current, isPlaying, isLoading, toggle, position, duration, seek } = usePlayer();
   const { isSaved, save, remove } = useLibrary();
+  const [menu, setMenu] = useState(false);
 
   if (!current) {
     return (
@@ -42,8 +46,8 @@ export default function PlayerScreen() {
         <Text style={styles.headerTitle} numberOfLines={1}>
           {current.artist}
         </Text>
-        <Pressable hitSlop={10} style={styles.iconBtn}>
-          <Feather name="share-2" size={20} color="#fff" />
+        <Pressable hitSlop={10} onPress={() => setMenu(true)} style={styles.iconBtn}>
+          <Feather name="more-vertical" size={20} color="#fff" />
         </Pressable>
       </View>
 
@@ -118,9 +122,27 @@ export default function PlayerScreen() {
               });
           }}
         >
-          <Feather name={saved ? "check-circle" : "download-cloud"} size={22} color="#fff" />
+          <Feather name={saved ? "heart" : "heart"} size={22} color={saved ? "#ff5252" : "#fff"} />
         </Pressable>
       </View>
+
+      <Pressable
+        onPress={() => setMenu(true)}
+        style={[styles.downloadRow, { backgroundColor: "rgba(255,255,255,0.12)" }]}
+      >
+        <Feather name="download" size={18} color="#fff" />
+        <Text style={styles.downloadText}>Download</Text>
+      </Pressable>
+
+      <VideoActionSheet
+        visible={menu}
+        onClose={() => setMenu(false)}
+        videoId={current.videoId}
+        title={current.title}
+        artist={current.artist}
+        thumbnail={current.thumbnail}
+        duration={duration}
+      />
     </View>
   );
 }
@@ -179,4 +201,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  downloadRow: {
+    marginHorizontal: 32,
+    marginTop: 24,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 999,
+  },
+  downloadText: { color: "#fff", fontSize: 14, fontFamily: "Inter_600SemiBold" },
 });

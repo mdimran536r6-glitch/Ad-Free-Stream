@@ -1,7 +1,7 @@
 import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
-import { bestAudio, pipedStream } from "@/lib/piped";
+import { bestAudio, mediaProxy, pipedStream } from "@/lib/piped";
 
 export interface NowPlaying {
   videoId: string;
@@ -43,7 +43,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           if (!audio) throw new Error("No audio stream available");
           uri = audio.url;
         }
-        player.replace({ uri });
+        player.replace({ uri: mediaProxy(uri) });
         player.play();
       } catch (err) {
         console.warn("[player] play failed", err);
