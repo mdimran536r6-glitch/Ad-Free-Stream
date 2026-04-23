@@ -2,11 +2,11 @@ import { Feather } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React from "react";
+import React, { useState } from "react";
 import {
   ActivityIndicator,
+  FlatList,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -17,11 +17,15 @@ import { VideoCard } from "@/components/VideoCard";
 import { useColors } from "@/hooks/useColors";
 import { pipedChannel } from "@/lib/piped";
 
+type Tab = "videos" | "about";
+
 export default function ChannelScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const [tab, setTab] = useState<Tab>("videos");
+  const [subscribed, setSubscribed] = useState(false);
 
   const channel = useQuery({
     queryKey: ["channel", id],
@@ -32,12 +36,84 @@ export default function ChannelScreen() {
   if (!id) return null;
   const data = channel.data;
 
+  const Header = (
+    <View>
+      {data?.bannerUrl ? (
+        <Image source={{ uri: data.bannerUrl }} style={styles.banner} contentFit="cover" />
+      ) : (
+        <View style={[styles.banner, { backgroundColor: colors.muted }]} />
+      )}
+
+      <View style={styles.profileRow}>
+        <Image source={{ uri: data?.avatarUrl }} style={styles.avatar} contentFit="cover" />
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.name, { color: colors.foreground }]} numberOfLines={1}>
+            {data?.name}
+            {data?.verified ? "  ✓" : ""}
+          </Text>
+          <Text style={[styles.sub, { color: colors.mutedForeground }]}>
+            {(data?.subscriberCount ?? 0) >= 1000
+              ? `${((data?.subscriberCount ?? 0) / 1000).toFixed(0)}K subscribers`
+              : `${data?.subscriberCount ?? 0} subscribers`}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.btnRow}>
+        <Pressable
+          onPress={() => setSubscribed((s) => !s)}
+          style={[
+            styles.subBtn,
+            {
+              backgroundColor: subscribed ? colors.secondary : colors.foreground,
+            },
+          ]}
+        >
+          <Text
+            style={[
+              styles.subBtnText,
+              { color: subscribed ? colors.foreground : colors.background },
+            ]}
+          >
+            {subscribed ? "SUBSCRIBED" : "SUBSCRIBE"}
+          </Text>
+        </Pressable>
+      </View>
+
+      <View style={styles.tabsRow}>
+        {(["videos", "about"] as Tab[]).map((t) => {
+          const active = tab === t;
+          return (
+            <Pressable key={t} onPress={() => setTab(t)} style={styles.tabBtn}>
+              <Text
+                style={[
+                  styles.tabText,
+                  { color: active ? colors.foreground : colors.mutedForeground },
+                ]}
+              >
+                {t === "videos" ? "Videos" : "About"}
+              </Text>
+              {active ? <View style={[styles.tabUnderline, { backgroundColor: colors.primary }]} /> : null}
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {tab === "about" && data?.description ? (
+        <Text style={[styles.desc, { color: colors.foreground }]}>{data.description}</Text>
+      ) : null}
+    </View>
+  );
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.background, paddingTop: insets.top }}>
       <View style={styles.headerRow}>
         <Pressable hitSlop={10} onPress={() => router.back()} style={styles.iconBtn}>
           <Feather name="arrow-left" size={22} color={colors.foreground} />
         </Pressable>
+        <Text style={[styles.headerTitle, { color: colors.foreground }]} numberOfLines={1}>
+          {data?.name ?? ""}
+        </Text>
       </View>
 
       {channel.isLoading || !data ? (
@@ -45,79 +121,39 @@ export default function ChannelScreen() {
           <ActivityIndicator color={colors.primary} />
         </View>
       ) : (
-        <ScrollView contentContainerStyle={{ paddingBottom: 200 }}>
-          {data.bannerUrl ? (
-            <Image source={{ uri: data.bannerUrl }} style={styles.banner} contentFit="cover" />
-          ) : (
-            <View style={[styles.banner, { backgroundColor: colors.muted }]} />
-          )}
-
-          <View style={styles.profileRow}>
-            <Image source={{ uri: data.avatarUrl }} style={styles.avatar} contentFit="cover" />
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.name, { color: colors.foreground }]} numberOfLines={1}>
-                {data.name}
-              </Text>
-              <Text style={[styles.sub, { color: colors.mutedForeground }]}>
-                {data.subscriberCount >= 1000
-                  ? `${(data.subscriberCount / 1000).toFixed(0)}K subscribers`
-                  : `${data.subscriberCount} subscribers`}
-              </Text>
-            </View>
-          </View>
-
-          <View style={styles.btnRow}>
-            <View style={[styles.subBtn, { backgroundColor: colors.primary }]}>
-              <Text style={[styles.subBtnText, { color: colors.primaryForeground }]}>SUBSCRIBE</Text>
-            </View>
-          </View>
-
-          {data.description ? (
-            <Text style={[styles.desc, { color: colors.mutedForeground }]} numberOfLines={3}>
-              {data.description}
-            </Text>
-          ) : null}
-
-          <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Latest videos</Text>
-            {(data.relatedStreams ?? []).map((it) => (
-              <VideoCard key={it.url} item={it} />
-            ))}
-          </View>
-        </ScrollView>
+        <FlatList
+          data={tab === "videos" ? data.relatedStreams ?? [] : []}
+          keyExtractor={(it, idx) => `${it.url}-${idx}`}
+          renderItem={({ item }) => <VideoCard item={item} variant="feed" />}
+          ListHeaderComponent={Header}
+          contentContainerStyle={{ paddingBottom: 200 }}
+          showsVerticalScrollIndicator={false}
+        />
       )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  headerRow: { flexDirection: "row", paddingHorizontal: 8, paddingVertical: 6 },
-  iconBtn: { padding: 8 },
+  headerRow: { flexDirection: "row", alignItems: "center", paddingHorizontal: 4, paddingVertical: 4, gap: 6 },
+  headerTitle: { flex: 1, fontSize: 16, fontFamily: "Inter_600SemiBold" },
+  iconBtn: { padding: 10 },
   center: { padding: 40, alignItems: "center" },
   banner: { width: "100%", aspectRatio: 16 / 5 },
   profileRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    gap: 14,
+    flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingTop: 16, gap: 14,
   },
   avatar: { width: 64, height: 64, borderRadius: 32 },
   name: { fontSize: 20, fontFamily: "Inter_700Bold" },
   sub: { fontSize: 13, fontFamily: "Inter_400Regular", marginTop: 2 },
   btnRow: { paddingHorizontal: 16, paddingTop: 14 },
-  subBtn: {
-    paddingVertical: 12,
-    borderRadius: 999,
-    alignItems: "center",
-  },
+  subBtn: { paddingVertical: 12, borderRadius: 999, alignItems: "center" },
   subBtnText: { fontSize: 13, fontFamily: "Inter_700Bold", letterSpacing: 0.7 },
-  desc: { fontSize: 13, fontFamily: "Inter_400Regular", paddingHorizontal: 16, paddingTop: 14, lineHeight: 18 },
-  section: { marginTop: 18 },
-  sectionTitle: {
-    fontSize: 18,
-    fontFamily: "Inter_700Bold",
-    paddingHorizontal: 16,
-    marginBottom: 8,
+  desc: { fontSize: 13, fontFamily: "Inter_400Regular", paddingHorizontal: 16, paddingTop: 14, lineHeight: 20 },
+  tabsRow: {
+    flexDirection: "row", paddingHorizontal: 8, marginTop: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#33333322",
   },
+  tabBtn: { paddingHorizontal: 12, paddingVertical: 12 },
+  tabText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  tabUnderline: { height: 2, marginTop: 6, borderRadius: 2 },
 });

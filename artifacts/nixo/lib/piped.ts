@@ -1,10 +1,14 @@
 import { Platform } from "react-native";
 
-function apiBase(): string {
-  if (Platform.OS === "web") return "/api/piped";
+export function apiRoot(): string {
+  if (Platform.OS === "web") return "/api";
   const domain = process.env.EXPO_PUBLIC_DOMAIN;
-  if (domain) return `https://${domain}/api/piped`;
-  return "/api/piped";
+  if (domain) return `https://${domain}/api`;
+  return "/api";
+}
+
+function apiBase(): string {
+  return apiRoot() + "/piped";
 }
 
 async function pipedFetch<T>(path: string): Promise<T> {
@@ -138,6 +142,12 @@ export interface PipedSearchResponse {
 export function pipedSearch(query: string, filter: SearchFilter = "all") {
   return pipedFetch<PipedSearchResponse>(
     `/search?q=${encodeURIComponent(query)}&filter=${filter}`,
+  );
+}
+
+export function pipedSearchNextPage(query: string, nextpage: string, filter: SearchFilter = "all") {
+  return pipedFetch<PipedSearchResponse>(
+    `/nextpage/search?nextpage=${encodeURIComponent(nextpage)}&q=${encodeURIComponent(query)}&filter=${filter}`,
   );
 }
 
