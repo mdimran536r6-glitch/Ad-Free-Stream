@@ -38,16 +38,17 @@ interface Chip {
 
 const CHIPS: Chip[] = [
   { key: "all", label: "All" },
-  { key: "music", label: "Music", query: "music videos", filter: "music_videos" },
+  { key: "shorts", label: "Shorts" },
+  { key: "music", label: "Music", query: "music videos 2026", filter: "music_videos" },
   { key: "live", label: "Live", query: "live now", filter: "videos" },
-  { key: "gaming", label: "Gaming", query: "gaming highlights", filter: "videos" },
+  { key: "gaming", label: "Gaming", query: "gaming highlights 2026", filter: "videos" },
   { key: "news", label: "News", query: "news today", filter: "videos" },
-  { key: "comedy", label: "Comedy", query: "comedy", filter: "videos" },
-  { key: "sports", label: "Sports", query: "sports highlights", filter: "videos" },
-  { key: "tech", label: "Tech", query: "tech review", filter: "videos" },
-  { key: "podcasts", label: "Podcasts", query: "podcast", filter: "videos" },
-  { key: "movies", label: "Movies", query: "movie trailer", filter: "videos" },
-  { key: "vlogs", label: "Vlogs", query: "vlog", filter: "videos" },
+  { key: "comedy", label: "Comedy", query: "comedy 2026", filter: "videos" },
+  { key: "sports", label: "Sports", query: "sports highlights 2026", filter: "videos" },
+  { key: "tech", label: "Tech", query: "tech review 2026", filter: "videos" },
+  { key: "podcasts", label: "Podcasts", query: "podcast 2026", filter: "videos" },
+  { key: "movies", label: "Movies", query: "movie trailer 2026", filter: "videos" },
+  { key: "vlogs", label: "Vlogs", query: "vlog 2026", filter: "videos" },
 ];
 
 const REGIONS = ["BD", "US", "IN", "GB"] as const;
@@ -114,22 +115,60 @@ export default function HomeScreen() {
       // Initial page (no token)
       if (!pageParam) {
         if (chip.key === "all") {
-          // Mix trending from multiple regions, shuffled, with watched channels' recommendations
-          const trendingResults = await Promise.allSettled(
-            REGIONS.map((r) => pipedTrending(r)),
+          // Use search seeds (Piped trending is mostly live right now) + region trending as bonus
+          const seedQueries = [
+            "trending videos this week",
+            "popular 2026",
+            "viral video",
+            "best moments 2026",
+            "most viewed today",
+          ];
+          // pick 3 random seeds for variety
+          const picks = shuffle([...seedQueries]).slice(0, 3);
+          const [searchResults, trendingResults] = await Promise.all([
+            Promise.allSettled(picks.map((q) => pipedSearch(q, "videos"))),
+            Promise.allSettled(REGIONS.map((r) => pipedTrending(r))),
+          ]);
+          const fromSearch = searchResults.flatMap((r) =>
+            r.status === "fulfilled"
+              ? (r.value.items ?? []).filter((i): i is PipedStreamItem => i.type === "stream" && i.duration > 0)
+              : [],
           );
-          const trending = trendingResults
+          const fromTrending = trendingResults
             .flatMap((r) => (r.status === "fulfilled" ? r.value : []))
-            .slice(0, 80);
-          const merged = dedupe([...recommendations, ...shuffle(trending)], watchedSet);
+            .filter((v) => v.duration > 0 && !(v as { isShort?: boolean }).isShort);
+          const nextSeed = picks[0];
+          const merged = dedupe(
+            [...recommendations, ...shuffle([...fromTrending, ...fromSearch])],
+            watchedSet,
+          );
           return {
             items: merged,
-            nextpage: { kind: "search", q: "popular videos", token: null, filter: "videos" },
+            nextpage: { kind: "search", q: nextSeed, token: null, filter: "videos" },
+          };
+        }
+        if (chip.key === "shorts") {
+          // Pull shorts via search and trending
+          const trendingResults = await Promise.allSettled(REGIONS.map((r) => pipedTrending(r)));
+          const trendingShorts = trendingResults
+            .flatMap((r) => (r.status === "fulfilled" ? r.value : []))
+            .filter((v) => (v as { isShort?: boolean }).isShort);
+          let searched: PipedStreamItem[] = [];
+          try {
+            const r = await pipedSearch("shorts viral", "videos");
+            searched = (r.items ?? []).filter((i): i is PipedStreamItem => i.type === "stream" && (i.duration <= 60 && i.duration > 0));
+          } catch { /* ignore */ }
+          const merged = dedupe([...shuffle(trendingShorts), ...searched], watchedSet);
+          return {
+            items: merged,
+            nextpage: { kind: "search", q: "shorts viral", token: null, filter: "videos" },
           };
         }
         // Specific category: search + nextpage
         const r = await pipedSearch(chip.query!, chip.filter ?? "videos");
-        const items = (r.items ?? []).filter((i): i is PipedStreamItem => i.type === "stream");
+        const items = (r.items ?? [])
+          .filter((i): i is PipedStreamItem => i.type === "stream")
+          .filter((v) => chip.key === "live" || v.duration > 0);
         return {
           items: dedupe(items, watchedSet),
           nextpage: r.nextpage
@@ -141,7 +180,9 @@ export default function HomeScreen() {
       const r = pageParam.token
         ? await pipedSearchNextPage(pageParam.q, pageParam.token, pageParam.filter)
         : await pipedSearch(pageParam.q, pageParam.filter);
-      const items = (r.items ?? []).filter((i): i is PipedStreamItem => i.type === "stream");
+      const items = (r.items ?? [])
+        .filter((i): i is PipedStreamItem => i.type === "stream")
+        .filter((v) => chip.key === "live" || v.duration > 0);
       return {
         items: dedupe(items, watchedSet),
         nextpage: r.nextpage

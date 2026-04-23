@@ -8,8 +8,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { VideoActionSheet } from "@/components/VideoActionSheet";
 import { usePlayer } from "@/contexts/PlayerContext";
+import { useLibrary } from "@/contexts/LibraryContext";
 import { useColors } from "@/hooks/useColors";
-import { extractVideoId, formatDuration, pipedPlaylist, type PipedStreamItem } from "@/lib/piped";
+import { downloadMedia } from "@/lib/downloads";
+import { bestAudio, extractVideoId, formatDuration, pipedPlaylist, pipedStream, type PipedStreamItem } from "@/lib/piped";
 
 export default function PlaylistScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -17,13 +19,46 @@ export default function PlaylistScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { play } = usePlayer();
+  const { addDownload } = useLibrary();
   const [menu, setMenu] = React.useState<PipedStreamItem | null>(null);
+  const [bulk, setBulk] = React.useState<{ done: number; total: number; current: string } | null>(null);
 
   const q = useQuery({
     queryKey: ["playlist", id],
     queryFn: () => pipedPlaylist(id!),
     enabled: !!id,
   });
+
+  const downloadAll = React.useCallback(async () => {
+    const items = q.data?.relatedStreams ?? [];
+    if (!items.length) return;
+    setBulk({ done: 0, total: items.length, current: "" });
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      setBulk({ done: i, total: items.length, current: it.title });
+      try {
+        const vid = extractVideoId(it.url);
+        const det = await pipedStream(vid);
+        const a = bestAudio(det.audioStreams);
+        if (!a) continue;
+        const fmt: "m4a" | "webm" = a.mimeType?.includes("mp4") ? "m4a" : "webm";
+        const res = await downloadMedia(a.url, `${it.title} - ${it.uploaderName}`, fmt);
+        await addDownload({
+          videoId: vid,
+          title: it.title,
+          artist: it.uploaderName,
+          thumbnail: it.thumbnail,
+          duration: it.duration,
+          format: fmt,
+          localUri: res.uri,
+          size: res.size,
+        });
+      } catch {
+        /* skip */
+      }
+    }
+    setBulk(null);
+  }, [q.data, addDownload]);
 
   if (!id) return null;
   const data = q.data;
@@ -37,22 +72,39 @@ export default function PlaylistScreen() {
       <Text style={[styles.meta, { color: colors.mutedForeground }]} numberOfLines={1}>
         {data.uploader} · {data.videos} songs
       </Text>
-      <Pressable
-        onPress={() => {
-          const first = data.relatedStreams?.[0];
-          if (!first) return;
-          play({
-            videoId: extractVideoId(first.url),
-            title: first.title,
-            artist: first.uploaderName,
-            thumbnail: first.thumbnail,
-          });
-        }}
-        style={[styles.playBtn, { backgroundColor: colors.primary }]}
-      >
-        <Feather name="play" size={16} color="#fff" />
-        <Text style={styles.playText}>Play</Text>
-      </Pressable>
+      <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
+        <Pressable
+          onPress={() => {
+            const first = data.relatedStreams?.[0];
+            if (!first) return;
+            play({
+              videoId: extractVideoId(first.url),
+              title: first.title,
+              artist: first.uploaderName,
+              thumbnail: first.thumbnail,
+            });
+          }}
+          style={[styles.playBtn, { backgroundColor: colors.primary }]}
+        >
+          <Feather name="play" size={16} color="#fff" />
+          <Text style={styles.playText}>Play</Text>
+        </Pressable>
+        <Pressable
+          disabled={!!bulk}
+          onPress={downloadAll}
+          style={[styles.playBtn, { backgroundColor: colors.muted }]}
+        >
+          <Feather name="download" size={16} color={colors.foreground} />
+          <Text style={[styles.playText, { color: colors.foreground }]}>
+            {bulk ? `${bulk.done}/${bulk.total}` : "Download all"}
+          </Text>
+        </Pressable>
+      </View>
+      {bulk ? (
+        <Text numberOfLines={1} style={[styles.meta, { color: colors.mutedForeground, marginTop: 6 }]}>
+          {bulk.current}
+        </Text>
+      ) : null}
     </View>
   ) : null;
 

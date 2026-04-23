@@ -11,11 +11,46 @@ function apiBase(): string {
   return apiRoot() + "/piped";
 }
 
+// Rewrites Piped proxy image/asset URLs to hit YouTube CDNs directly so dead
+// Piped instances don't leave us with broken thumbnails. Pattern:
+//   https://<piped-proxy-host>/<path>?host=<original-host>&...
+//   -> https://<original-host>/<path>?<rest>
+function unpipeUrl(u: string): string {
+  if (!u || typeof u !== "string") return u;
+  if (!/^https?:\/\/[^/]*pip|googleusercontent|ytimg/i.test(u)) return u;
+  try {
+    const m = u.match(/^https?:\/\/[^/]+(\/[^?#]*)\?(.*)$/);
+    if (!m) return u;
+    const path = m[1];
+    const params = new URLSearchParams(m[2]);
+    const host = params.get("host");
+    if (!host) return u;
+    params.delete("host");
+    const rest = params.toString();
+    return `https://${host}${path}${rest ? `?${rest}` : ""}`;
+  } catch {
+    return u;
+  }
+}
+
+function rewriteAssets<T>(value: T): T {
+  if (value === null || value === undefined) return value;
+  if (typeof value === "string") return unpipeUrl(value) as unknown as T;
+  if (Array.isArray(value)) return value.map((v) => rewriteAssets(v)) as unknown as T;
+  if (typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = rewriteAssets(v);
+    return out as unknown as T;
+  }
+  return value;
+}
+
 async function pipedFetch<T>(path: string): Promise<T> {
   const url = `${apiBase()}${path}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return (await res.json()) as T;
+  const data = (await res.json()) as T;
+  return rewriteAssets(data);
 }
 
 export interface PipedStreamItem {
@@ -155,8 +190,18 @@ export function pipedSuggestions(query: string) {
   return pipedFetch<string[]>(`/suggestions?query=${encodeURIComponent(query)}`);
 }
 
-export function pipedStream(videoId: string) {
-  return pipedFetch<PipedStreamDetails>(`/streams/${videoId}`);
+export async function pipedStream(videoId: string): Promise<PipedStreamDetails> {
+  const url = `${apiRoot()}/streams/${videoId}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = (await res.json()) as PipedStreamDetails;
+  // Only rewrite metadata/thumbnail fields; preserve actual stream URLs
+  return {
+    ...data,
+    thumbnailUrl: unpipeUrl(data.thumbnailUrl),
+    uploaderAvatar: unpipeUrl(data.uploaderAvatar),
+    relatedStreams: rewriteAssets(data.relatedStreams ?? []),
+  };
 }
 
 export function pipedChannel(channelId: string) {

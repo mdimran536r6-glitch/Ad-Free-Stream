@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { spawn } from "node:child_process";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
@@ -82,18 +83,199 @@ router.get("/proxy", async (req, res) => {
   }
 });
 
+interface YtDlpFormat {
+  url?: string;
+  format_id?: string;
+  ext?: string;
+  acodec?: string;
+  vcodec?: string;
+  abr?: number;
+  vbr?: number;
+  tbr?: number;
+  height?: number;
+  width?: number;
+  protocol?: string;
+}
+
+interface YtDlpInfo {
+  id?: string;
+  title?: string;
+  description?: string;
+  thumbnail?: string;
+  uploader?: string;
+  channel?: string;
+  channel_id?: string;
+  upload_date?: string;
+  timestamp?: number;
+  duration?: number;
+  view_count?: number;
+  like_count?: number;
+  formats?: YtDlpFormat[];
+  is_live?: boolean;
+}
+
+function runYtDlp(videoId: string): Promise<YtDlpInfo> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn("yt-dlp", [
+      "-j",
+      "--no-warnings",
+      "--skip-download",
+      "--no-call-home",
+      "--socket-timeout",
+      "15",
+      `https://www.youtube.com/watch?v=${videoId}`,
+    ]);
+    let out = "";
+    let err = "";
+    const timer = setTimeout(() => proc.kill("SIGKILL"), 28000);
+    proc.stdout.on("data", (d) => (out += d));
+    proc.stderr.on("data", (d) => (err += d));
+    proc.on("error", (e) => { clearTimeout(timer); reject(e); });
+    proc.on("close", (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        reject(new Error(err.slice(0, 300) || `yt-dlp exit ${code}`));
+        return;
+      }
+      try {
+        resolve(JSON.parse(out));
+      } catch (e) {
+        reject(e);
+      }
+    });
+  });
+}
+
+interface AudioOut { url: string; format: string; quality: string; mimeType: string; bitrate: number; codec: string }
+interface VideoOut { url: string; format: string; quality: string; mimeType: string; width: number; height: number; bitrate: number; videoOnly: boolean }
+
+function ytDlpToStreams(info: YtDlpInfo): { audioStreams: AudioOut[]; videoStreams: VideoOut[] } {
+  const formats = (info.formats ?? []).filter((f) => f.url && f.protocol && /^https/.test(f.protocol));
+  const audioStreams: AudioOut[] = formats
+    .filter((f) => f.acodec && f.acodec !== "none" && (!f.vcodec || f.vcodec === "none"))
+    .map((f) => ({
+      url: f.url!,
+      format: f.ext ?? "",
+      quality: `${Math.round(f.abr ?? 0)}kbps`,
+      mimeType: f.ext === "m4a" ? "audio/mp4" : `audio/${f.ext}`,
+      bitrate: Math.round((f.abr ?? 0) * 1000),
+      codec: f.acodec!,
+    }));
+  const videoStreams: VideoOut[] = formats
+    .filter((f) => f.vcodec && f.vcodec !== "none" && f.height)
+    .map((f) => ({
+      url: f.url!,
+      format: f.ext ?? "",
+      quality: `${f.height}p`,
+      mimeType: f.ext === "mp4" ? "video/mp4" : `video/${f.ext}`,
+      width: f.width ?? 0,
+      height: f.height ?? 0,
+      bitrate: Math.round((f.tbr ?? 0) * 1000),
+      videoOnly: !f.acodec || f.acodec === "none",
+    }));
+  return { audioStreams, videoStreams };
+}
+
+const ytCache = new Map<string, { ts: number; data: { audioStreams: AudioOut[]; videoStreams: VideoOut[]; uploadDate: string; thumbnail?: string; title?: string; uploader?: string } }>();
+const YT_CACHE_TTL = 30 * 60 * 1000;
+
+async function resolveWithYtDlp(videoId: string) {
+  const cached = ytCache.get(videoId);
+  if (cached && Date.now() - cached.ts < YT_CACHE_TTL) return cached.data;
+  const info = await runYtDlp(videoId);
+  const { audioStreams, videoStreams } = ytDlpToStreams(info);
+  const ud = info.upload_date;
+  const uploadDate = ud && /^\d{8}$/.test(ud) ? `${ud.slice(0, 4)}-${ud.slice(4, 6)}-${ud.slice(6, 8)}` : "";
+  const data = { audioStreams, videoStreams, uploadDate, thumbnail: info.thumbnail, title: info.title, uploader: info.uploader ?? info.channel };
+  ytCache.set(videoId, { ts: Date.now(), data });
+  return data;
+}
+
+router.get("/streams/:id", async (req, res) => {
+  const id = String(req.params.id || "");
+  if (!/^[\w-]{11}$/.test(id)) {
+    res.status(400).json({ error: "bad id" });
+    return;
+  }
+
+  let pipedData: Record<string, unknown> | null = null;
+  const shuffled = [...INSTANCES].sort(() => Math.random() - 0.5).slice(0, 6);
+  for (const base of shuffled) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 5000);
+      const r = await fetch(`${base}/streams/${id}`, {
+        headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" },
+        signal: ctrl.signal,
+      });
+      clearTimeout(timer);
+      if (!r.ok) continue;
+      const ct = r.headers.get("content-type") ?? "";
+      if (!ct.includes("json")) continue;
+      pipedData = await r.json();
+      break;
+    } catch {
+      // ignore
+    }
+  }
+
+  try {
+    const yt = await resolveWithYtDlp(id);
+    if (pipedData) {
+      const audio = (pipedData.audioStreams as unknown[]) ?? [];
+      const video = (pipedData.videoStreams as unknown[]) ?? [];
+      if (audio.length === 0) pipedData.audioStreams = yt.audioStreams;
+      if (video.length === 0) pipedData.videoStreams = yt.videoStreams;
+      if (!pipedData.uploadDate || pipedData.uploadDate === "" || !String(pipedData.uploadDate).match(/\d{4}/)) {
+        pipedData.uploadDate = yt.uploadDate;
+      }
+      res.setHeader("content-type", "application/json");
+      res.setHeader("cache-control", "public, max-age=120");
+      res.json(pipedData);
+      return;
+    }
+    res.json({
+      title: yt.title ?? "",
+      description: "",
+      uploadDate: yt.uploadDate,
+      uploader: yt.uploader ?? "",
+      uploaderUrl: "",
+      uploaderAvatar: "",
+      uploaderSubscriberCount: 0,
+      thumbnailUrl: yt.thumbnail ?? "",
+      duration: 0,
+      views: 0,
+      likes: 0,
+      audioStreams: yt.audioStreams,
+      videoStreams: yt.videoStreams,
+      hls: undefined,
+      relatedStreams: [],
+    });
+  } catch (err) {
+    req.log.error({ err, id }, "stream resolution failed");
+    if (pipedData) {
+      res.setHeader("content-type", "application/json");
+      res.json(pipedData);
+      return;
+    }
+    res.status(502).json({ error: "stream_unavailable" });
+  }
+});
+
 const cache = new Map<string, { ts: number; text: string; ct: string }>();
-const CACHE_TTL = 5 * 60 * 1000;
+const CACHE_TTL = 60 * 1000;
 
 router.get("/piped/*splat", async (req, res) => {
   const path = req.path.replace(/^\/piped/, "");
   const query = req.url.includes("?") ? req.url.substring(req.url.indexOf("?")) : "";
   const target = `${path}${query}`;
 
-  const cached = cache.get(target);
+  // No cache for trending (always fresh) and search w/o nextpage
+  const noCache = path === "/trending" || path.startsWith("/search");
+  const cached = noCache ? null : cache.get(target);
   if (cached && Date.now() - cached.ts < CACHE_TTL) {
     res.setHeader("content-type", cached.ct);
-    res.setHeader("cache-control", "public, max-age=60");
+    res.setHeader("cache-control", "public, max-age=30");
     res.status(200).send(cached.text);
     return;
   }
@@ -116,7 +298,7 @@ router.get("/piped/*splat", async (req, res) => {
       }
       const ct = upstream.headers.get("content-type") ?? "";
       if (!ct.includes("json")) {
-        lastErr = new Error(`non-json content-type ${ct} from ${base}`);
+        lastErr = new Error(`non-json from ${base}`);
         continue;
       }
       const text = await upstream.text();
@@ -124,9 +306,9 @@ router.get("/piped/*splat", async (req, res) => {
         lastErr = new Error(`error body from ${base}`);
         continue;
       }
-      cache.set(target, { ts: Date.now(), text, ct });
+      if (!noCache) cache.set(target, { ts: Date.now(), text, ct });
       res.setHeader("content-type", ct);
-      res.setHeader("cache-control", "public, max-age=60");
+      res.setHeader("cache-control", noCache ? "no-store" : "public, max-age=30");
       res.status(200).send(text);
       return;
     } catch (err) {
