@@ -117,6 +117,17 @@ export function pipedTrending(region = "BD") {
   return pipedFetch<PipedStreamItem[]>(`/trending?region=${region}`);
 }
 
+export type SearchFilter =
+  | "all"
+  | "videos"
+  | "channels"
+  | "playlists"
+  | "music_songs"
+  | "music_videos"
+  | "music_albums"
+  | "music_playlists"
+  | "music_artists";
+
 export interface PipedSearchResponse {
   items: PipedSearchItem[];
   nextpage?: string | null;
@@ -124,7 +135,7 @@ export interface PipedSearchResponse {
   corrected?: boolean;
 }
 
-export function pipedSearch(query: string, filter = "all") {
+export function pipedSearch(query: string, filter: SearchFilter = "all") {
   return pipedFetch<PipedSearchResponse>(
     `/search?q=${encodeURIComponent(query)}&filter=${filter}`,
   );

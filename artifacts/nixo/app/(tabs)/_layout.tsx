@@ -20,7 +20,7 @@ export default function TabLayout() {
           tabBarStyle: {
             backgroundColor: colors.background,
             borderTopColor: colors.border,
-            ...(isWeb ? { height: 84 } : {}),
+            ...(isWeb ? { height: 64 } : {}),
           },
           tabBarLabelStyle: { fontFamily: "Inter_500Medium", fontSize: 11 },
         }}
@@ -33,9 +33,16 @@ export default function TabLayout() {
           }}
         />
         <Tabs.Screen
+          name="music"
+          options={{
+            title: "Music",
+            tabBarIcon: ({ color }) => <Feather name="music" size={22} color={color} />,
+          }}
+        />
+        <Tabs.Screen
           name="files"
           options={{
-            title: "My Files",
+            title: "Downloads",
             tabBarIcon: ({ color }) => <Feather name="download" size={22} color={color} />,
           }}
         />
@@ -52,6 +59,6 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 0,
     right: 0,
-    bottom: Platform.OS === "web" ? 84 : 60,
+    bottom: Platform.OS === "web" ? 64 : 60,
   },
 });

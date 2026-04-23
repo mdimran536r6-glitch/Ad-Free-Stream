@@ -8,6 +8,7 @@ export interface NowPlaying {
   title: string;
   artist: string;
   thumbnail: string;
+  localUri?: string;
 }
 
 interface PlayerContextValue {
@@ -35,10 +36,14 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       try {
         setIsLoading(true);
         setCurrent(track);
-        const details = await pipedStream(track.videoId);
-        const audio = bestAudio(details.audioStreams);
-        if (!audio) throw new Error("No audio stream available");
-        player.replace({ uri: audio.url });
+        let uri = track.localUri ?? null;
+        if (!uri) {
+          const details = await pipedStream(track.videoId);
+          const audio = bestAudio(details.audioStreams);
+          if (!audio) throw new Error("No audio stream available");
+          uri = audio.url;
+        }
+        player.replace({ uri });
         player.play();
       } catch (err) {
         console.warn("[player] play failed", err);
