@@ -1,0 +1,8 @@
+uploads = []
+outputs = []
+
+[[generated]]
+id = "SGtzhhQZOFhtce4lGv9T7"
+uri = "file://artifacts/nixo/assets/images/icon.png"
+type = "image"
+title = "nixo app icon"
