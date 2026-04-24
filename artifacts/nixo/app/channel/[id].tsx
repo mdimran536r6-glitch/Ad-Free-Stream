@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { BottomNav } from "@/components/BottomNav";
 import { VideoCard } from "@/components/VideoCard";
 import { useColors } from "@/hooks/useColors";
 import { pipedChannel } from "@/lib/piped";
@@ -126,10 +127,11 @@ export default function ChannelScreen() {
           keyExtractor={(it, idx) => `${it.url}-${idx}`}
           renderItem={({ item }) => <VideoCard item={item} variant="feed" />}
           ListHeaderComponent={Header}
-          contentContainerStyle={{ paddingBottom: 200 }}
+          contentContainerStyle={{ paddingBottom: 140 }}
           showsVerticalScrollIndicator={false}
         />
       )}
+      <BottomNav />
     </View>
   );
 }

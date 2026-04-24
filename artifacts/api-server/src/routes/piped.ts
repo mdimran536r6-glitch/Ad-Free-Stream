@@ -62,7 +62,6 @@ router.get("/proxy", async (req, res) => {
   try {
     const headers: Record<string, string> = {};
     if (req.headers.range) headers["Range"] = String(req.headers.range);
-    // Some upstream CDNs key on the User-Agent. Use a reasonable browser UA.
     headers["User-Agent"] =
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
     const upstream = await fetch(url, { headers });
@@ -76,19 +75,14 @@ router.get("/proxy", async (req, res) => {
       const v = upstream.headers.get(h);
       if (v) res.setHeader(h, v);
     }
-    // Normalize content-type so the browser plays inline instead of downloading.
-    // YouTube googlevideo URLs sometimes return application/octet-stream or
-    // attach Content-Disposition: attachment which forces download.
     const upstreamCt = upstream.headers.get("content-type") ?? "";
     const mimeHint = String(req.query.mime ?? "");
     let ct = mimeHint || upstreamCt;
     if (!ct || /octet-stream|application\/binary/i.test(ct)) {
-      // Try to infer from URL ?mime= param (googlevideo uses this).
       const m = /[?&]mime=([^&]+)/.exec(url);
       if (m) ct = decodeURIComponent(m[1]);
     }
     if (ct) res.setHeader("Content-Type", ct);
-    // Critically: never forward Content-Disposition — that triggers a download.
     res.setHeader("Content-Disposition", "inline");
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges");
@@ -140,12 +134,12 @@ function runYtDlp(videoId: string): Promise<YtDlpInfo> {
       "--skip-download",
       "--no-call-home",
       "--socket-timeout",
-      "15",
+      "12",
       `https://www.youtube.com/watch?v=${videoId}`,
     ]);
     let out = "";
     let err = "";
-    const timer = setTimeout(() => proc.kill("SIGKILL"), 28000);
+    const timer = setTimeout(() => proc.kill("SIGKILL"), 22000);
     proc.stdout.on("data", (d) => (out += d));
     proc.stderr.on("data", (d) => (err += d));
     proc.on("error", (e) => { clearTimeout(timer); reject(e); });
@@ -197,16 +191,49 @@ function ytDlpToStreams(info: YtDlpInfo): { audioStreams: AudioOut[]; videoStrea
 const ytCache = new Map<string, { ts: number; data: { audioStreams: AudioOut[]; videoStreams: VideoOut[]; uploadDate: string; thumbnail?: string; title?: string; uploader?: string } }>();
 const YT_CACHE_TTL = 30 * 60 * 1000;
 
+const ytPending = new Map<string, Promise<{ audioStreams: AudioOut[]; videoStreams: VideoOut[]; uploadDate: string; thumbnail?: string; title?: string; uploader?: string }>>();
+
 async function resolveWithYtDlp(videoId: string) {
   const cached = ytCache.get(videoId);
   if (cached && Date.now() - cached.ts < YT_CACHE_TTL) return cached.data;
-  const info = await runYtDlp(videoId);
-  const { audioStreams, videoStreams } = ytDlpToStreams(info);
-  const ud = info.upload_date;
-  const uploadDate = ud && /^\d{8}$/.test(ud) ? `${ud.slice(0, 4)}-${ud.slice(4, 6)}-${ud.slice(6, 8)}` : "";
-  const data = { audioStreams, videoStreams, uploadDate, thumbnail: info.thumbnail, title: info.title, uploader: info.uploader ?? info.channel };
-  ytCache.set(videoId, { ts: Date.now(), data });
-  return data;
+  const inflight = ytPending.get(videoId);
+  if (inflight) return inflight;
+  const promise = (async () => {
+    const info = await runYtDlp(videoId);
+    const { audioStreams, videoStreams } = ytDlpToStreams(info);
+    const ud = info.upload_date;
+    const uploadDate = ud && /^\d{8}$/.test(ud) ? `${ud.slice(0, 4)}-${ud.slice(4, 6)}-${ud.slice(6, 8)}` : "";
+    const data = { audioStreams, videoStreams, uploadDate, thumbnail: info.thumbnail, title: info.title, uploader: info.uploader ?? info.channel };
+    ytCache.set(videoId, { ts: Date.now(), data });
+    return data;
+  })();
+  ytPending.set(videoId, promise);
+  promise.finally(() => ytPending.delete(videoId));
+  return promise;
+}
+
+// Race a Piped request across multiple instances; resolve with the first success.
+async function racePiped<T>(path: string, perTimeoutMs = 4500, parallelism = 5): Promise<T> {
+  const shuffled = [...INSTANCES].sort(() => Math.random() - 0.5).slice(0, parallelism);
+  const attempts = shuffled.map(async (base) => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), perTimeoutMs);
+    try {
+      const r = await fetch(`${base}${path}`, {
+        headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" },
+        signal: ctrl.signal,
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const ct = r.headers.get("content-type") ?? "";
+      if (!ct.includes("json")) throw new Error("non-json");
+      const text = await r.text();
+      if (text.includes('"error"') && text.length < 200) throw new Error("error body");
+      return { text, ct } as unknown as T;
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+  return Promise.any(attempts);
 }
 
 router.get("/streams/:id", async (req, res) => {
@@ -216,42 +243,52 @@ router.get("/streams/:id", async (req, res) => {
     return;
   }
 
-  let pipedData: Record<string, unknown> | null = null;
-  const shuffled = [...INSTANCES].sort(() => Math.random() - 0.5).slice(0, 6);
-  for (const base of shuffled) {
+  // Race: Piped (parallel across instances) AND yt-dlp (cached/inflight).
+  // Whichever returns a usable result first wins; we still merge missing fields if both finish.
+  const pipedPromise = (async (): Promise<Record<string, unknown> | null> => {
     try {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 5000);
-      const r = await fetch(`${base}/streams/${id}`, {
-        headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" },
-        signal: ctrl.signal,
-      });
-      clearTimeout(timer);
-      if (!r.ok) continue;
-      const ct = r.headers.get("content-type") ?? "";
-      if (!ct.includes("json")) continue;
-      pipedData = (await r.json()) as Record<string, unknown> | null;
-      break;
+      const result = await racePiped<{ text: string; ct: string }>(`/streams/${id}`, 4500, 6);
+      return JSON.parse(result.text) as Record<string, unknown>;
     } catch {
-      // ignore
+      return null;
     }
-  }
+  })();
 
-  try {
-    const yt = await resolveWithYtDlp(id);
-    if (pipedData) {
-      const audio = (pipedData.audioStreams as unknown[]) ?? [];
-      const video = (pipedData.videoStreams as unknown[]) ?? [];
-      if (audio.length === 0) pipedData.audioStreams = yt.audioStreams;
-      if (video.length === 0) pipedData.videoStreams = yt.videoStreams;
-      if (!pipedData.uploadDate || pipedData.uploadDate === "" || !String(pipedData.uploadDate).match(/\d{4}/)) {
-        pipedData.uploadDate = yt.uploadDate;
-      }
+  const ytPromise = resolveWithYtDlp(id).catch(() => null);
+
+  // Wait for whichever resolves first; if Piped wins and has full data, return immediately.
+  const piped = await pipedPromise;
+  if (piped) {
+    const audio = (piped.audioStreams as unknown[]) ?? [];
+    const video = (piped.videoStreams as unknown[]) ?? [];
+    const needsYt = audio.length === 0 || video.length === 0 ||
+      !piped.uploadDate || !String(piped.uploadDate).match(/\d{4}/);
+    if (!needsYt) {
       res.setHeader("content-type", "application/json");
       res.setHeader("cache-control", "public, max-age=120");
-      res.json(pipedData);
+      res.json(piped);
       return;
     }
+    // Need to fill gaps from yt-dlp
+    const yt = await ytPromise;
+    if (yt) {
+      if (audio.length === 0) piped.audioStreams = yt.audioStreams;
+      if (video.length === 0) piped.videoStreams = yt.videoStreams;
+      if (!piped.uploadDate || !String(piped.uploadDate).match(/\d{4}/)) {
+        piped.uploadDate = yt.uploadDate;
+      }
+    }
+    res.setHeader("content-type", "application/json");
+    res.setHeader("cache-control", "public, max-age=120");
+    res.json(piped);
+    return;
+  }
+
+  // Piped failed entirely — fall back to yt-dlp only
+  const yt = await ytPromise;
+  if (yt) {
+    res.setHeader("content-type", "application/json");
+    res.setHeader("cache-control", "public, max-age=120");
     res.json({
       title: yt.title ?? "",
       description: "",
@@ -269,72 +306,81 @@ router.get("/streams/:id", async (req, res) => {
       hls: undefined,
       relatedStreams: [],
     });
-  } catch (err) {
-    req.log.error({ err, id }, "stream resolution failed");
-    if (pipedData) {
-      res.setHeader("content-type", "application/json");
-      res.json(pipedData);
-      return;
-    }
-    res.status(502).json({ error: "stream_unavailable" });
+    return;
   }
+
+  res.status(502).json({ error: "stream_unavailable" });
 });
 
-const cache = new Map<string, { ts: number; text: string; ct: string }>();
-const CACHE_TTL = 60 * 1000;
+interface CacheEntry { ts: number; text: string; ct: string }
+const cache = new Map<string, CacheEntry>();
+const inflight = new Map<string, Promise<CacheEntry>>();
+const CACHE_TTL = 90 * 1000;
+const STALE_TTL = 10 * 60 * 1000;
 
 router.get("/piped/*splat", async (req, res) => {
   const path = req.path.replace(/^\/piped/, "");
   const query = req.url.includes("?") ? req.url.substring(req.url.indexOf("?")) : "";
   const target = `${path}${query}`;
 
-  // No cache for trending (always fresh) and search w/o nextpage
-  const noCache = path === "/trending" || path.startsWith("/search");
-  const cached = noCache ? null : cache.get(target);
-  if (cached && Date.now() - cached.ts < CACHE_TTL) {
+  const noCache = false; // we always cache short-term to keep UX snappy
+  const cached = cache.get(target);
+  const now = Date.now();
+
+  if (cached && now - cached.ts < CACHE_TTL) {
     res.setHeader("content-type", cached.ct);
-    res.setHeader("cache-control", "public, max-age=30");
+    res.setHeader("cache-control", "public, max-age=60");
     res.status(200).send(cached.text);
     return;
   }
 
-  const shuffled = [...INSTANCES].sort(() => Math.random() - 0.5);
-
-  let lastErr: unknown;
-  for (const base of shuffled) {
-    try {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 6000);
-      const upstream = await fetch(`${base}${target}`, {
-        headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" },
-        signal: ctrl.signal,
-      });
-      clearTimeout(timer);
-      if (!upstream.ok) {
-        lastErr = new Error(`HTTP ${upstream.status} from ${base}`);
-        continue;
-      }
-      const ct = upstream.headers.get("content-type") ?? "";
-      if (!ct.includes("json")) {
-        lastErr = new Error(`non-json from ${base}`);
-        continue;
-      }
-      const text = await upstream.text();
-      if (text.includes('"error"') && text.length < 200) {
-        lastErr = new Error(`error body from ${base}`);
-        continue;
-      }
-      if (!noCache) cache.set(target, { ts: Date.now(), text, ct });
-      res.setHeader("content-type", ct);
-      res.setHeader("cache-control", noCache ? "no-store" : "public, max-age=30");
-      res.status(200).send(text);
-      return;
-    } catch (err) {
-      lastErr = err;
+  // Stale-while-revalidate: serve stale immediately, refresh in background.
+  if (cached && now - cached.ts < STALE_TTL) {
+    res.setHeader("content-type", cached.ct);
+    res.setHeader("cache-control", "public, max-age=15");
+    res.status(200).send(cached.text);
+    if (!inflight.has(target)) {
+      const p = racePiped<{ text: string; ct: string }>(target, 5000, 5)
+        .then((r) => {
+          const entry: CacheEntry = { ts: Date.now(), text: r.text, ct: r.ct };
+          cache.set(target, entry);
+          return entry;
+        })
+        .catch(() => cached)
+        .finally(() => inflight.delete(target));
+      inflight.set(target, p);
     }
+    return;
   }
-  req.log.error({ err: lastErr, target }, "All Piped upstreams failed");
-  res.status(502).json({ error: "upstream_unavailable" });
+
+  // No usable cache — race upstreams.
+  try {
+    let p = inflight.get(target);
+    if (!p) {
+      p = racePiped<{ text: string; ct: string }>(target, 5000, 6)
+        .then((r) => {
+          const entry: CacheEntry = { ts: Date.now(), text: r.text, ct: r.ct };
+          if (!noCache) cache.set(target, entry);
+          return entry;
+        })
+        .finally(() => inflight.delete(target));
+      inflight.set(target, p);
+    }
+    const entry = await p;
+    res.setHeader("content-type", entry.ct);
+    res.setHeader("cache-control", "public, max-age=30");
+    res.status(200).send(entry.text);
+  } catch (err) {
+    req.log.error({ err, target }, "All Piped upstreams failed");
+    if (cached) {
+      // Last resort: serve very stale data
+      res.setHeader("content-type", cached.ct);
+      res.setHeader("cache-control", "no-store");
+      res.status(200).send(cached.text);
+      return;
+    }
+    res.status(502).json({ error: "upstream_unavailable" });
+  }
 });
 
 export default router;

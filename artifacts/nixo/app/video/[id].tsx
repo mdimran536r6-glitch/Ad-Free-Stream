@@ -2,10 +2,12 @@ import { Feather } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { StatusBar } from "expo-status-bar";
 import { useVideoPlayer, VideoView } from "expo-video";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -14,6 +16,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { BottomNav } from "@/components/BottomNav";
 import { VideoActionSheet } from "@/components/VideoActionSheet";
 import { VideoCard } from "@/components/VideoCard";
 import { useLibrary } from "@/contexts/LibraryContext";
@@ -42,6 +45,7 @@ export default function VideoScreen() {
     queryKey: ["stream", id],
     queryFn: () => pipedStream(id!),
     enabled: !!id,
+    staleTime: 1000 * 60 * 10,
   });
 
   const sourceUri = useMemo(() => {
@@ -73,9 +77,13 @@ export default function VideoScreen() {
   if (!id) return null;
   const channelId = data ? extractChannelId(data.uploaderUrl ?? "") : "";
 
+  // Video extends edge-to-edge under status bar; controls overlay use insets.top
+  const webTop = Platform.OS === "web" ? 67 : 0;
+
   return (
-    <View style={{ flex: 1, backgroundColor: colors.background, paddingTop: insets.top }}>
-      <View style={styles.videoBox}>
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <StatusBar style="light" translucent backgroundColor="transparent" />
+      <View style={[styles.videoBox, { paddingTop: webTop }]}>
         {sourceUri ? (
           <VideoView player={player} style={styles.video} contentFit="contain" nativeControls />
         ) : data ? (
@@ -85,7 +93,11 @@ export default function VideoScreen() {
             <ActivityIndicator color="#fff" />
           </View>
         )}
-        <Pressable hitSlop={12} onPress={() => router.back()} style={styles.backOverlay}>
+        <Pressable
+          hitSlop={12}
+          onPress={() => router.back()}
+          style={[styles.backOverlay, { top: insets.top + webTop + 8 }]}
+        >
           <Feather name="chevron-down" size={24} color="#fff" />
         </Pressable>
       </View>
@@ -114,7 +126,7 @@ export default function VideoScreen() {
           <ActivityIndicator color={colors.primary} />
         </View>
       ) : (
-        <ScrollView contentContainerStyle={{ paddingBottom: 200 }}>
+        <ScrollView contentContainerStyle={{ paddingBottom: 140 }}>
           <View style={styles.metaBox}>
             <Text style={[styles.title, { color: colors.foreground }]}>{data.title}</Text>
             <Text style={[styles.subMeta, { color: colors.mutedForeground }]}>
@@ -148,6 +160,8 @@ export default function VideoScreen() {
         </ScrollView>
       )}
 
+      <BottomNav />
+
       {data ? (
         <VideoActionSheet
           visible={menuOpen}
@@ -169,7 +183,7 @@ const styles = StyleSheet.create({
   iconBtn: { padding: 10 },
   videoBox: { width: "100%", aspectRatio: 16 / 9, backgroundColor: "#000", position: "relative" },
   backOverlay: {
-    position: "absolute", top: 8, left: 8,
+    position: "absolute", left: 8,
     width: 38, height: 38, borderRadius: 19,
     backgroundColor: "rgba(0,0,0,0.55)",
     alignItems: "center", justifyContent: "center",

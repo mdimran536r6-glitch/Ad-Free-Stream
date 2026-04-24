@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { BottomNav } from "@/components/BottomNav";
 import { VideoCard } from "@/components/VideoCard";
 import { useColors } from "@/hooks/useColors";
 import {
@@ -107,10 +108,11 @@ export default function SearchScreen() {
         <FlatList
           data={results.data?.items ?? []}
           keyExtractor={(it, idx) => `${it.url}-${idx}`}
-          contentContainerStyle={{ paddingBottom: 200 }}
+          contentContainerStyle={{ paddingBottom: 140 }}
           renderItem={({ item }) => <ResultItem item={item} />}
         />
       )}
+      <BottomNav />
     </View>
   );
 }

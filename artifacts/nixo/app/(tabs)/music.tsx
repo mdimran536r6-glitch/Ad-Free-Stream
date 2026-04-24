@@ -3,16 +3,18 @@ import { useQueries } from "@tanstack/react-query";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
-import React, { useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
   FlatList,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -29,6 +31,8 @@ const MOODS = [
   { key: "Workout", q: "workout music" },
   { key: "Chill", q: "chill music" },
   { key: "Devotional", q: "devotional songs" },
+  { key: "Romantic", q: "romantic songs new" },
+  { key: "Party", q: "party songs" },
 ];
 
 // YT-Music style fixed dark palette
@@ -41,19 +45,40 @@ const C = {
   accent: "#ff0844",
 };
 
+const HEADER_HEIGHT = 100; // brand row + chips row
+
 export default function MusicScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { play } = usePlayer();
   const [mood, setMood] = useState(MOODS[0]);
+  const [seed, setSeed] = useState<number>(Date.now());
+
+  // Animated header
+  const lastY = useRef(0);
+  const offsetY = useRef(0);
+  const headerTranslate = useRef(new Animated.Value(0)).current;
+  const onScroll = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const y = e.nativeEvent.contentOffset.y;
+      const dy = y - lastY.current;
+      lastY.current = y;
+      if (y < 0) return;
+      let next = offsetY.current + dy;
+      next = Math.max(0, Math.min(HEADER_HEIGHT, next));
+      offsetY.current = next;
+      headerTranslate.setValue(-next);
+    },
+    [headerTranslate],
+  );
 
   const queries = useQueries({
     queries: [
-      { queryKey: ["m-songs", mood.q], queryFn: () => pipedSearch(mood.q, "music_songs") },
-      { queryKey: ["m-vids", mood.q], queryFn: () => pipedSearch(mood.q, "music_videos") },
-      { queryKey: ["m-albums", mood.q], queryFn: () => pipedSearch(mood.q, "music_albums") },
-      { queryKey: ["m-artists", mood.q], queryFn: () => pipedSearch(mood.q, "music_artists") },
-      { queryKey: ["m-playlists", mood.q], queryFn: () => pipedSearch(mood.q, "music_playlists") },
+      { queryKey: ["m-songs", mood.q, seed], queryFn: () => pipedSearch(mood.q, "music_songs"), staleTime: 1000 * 60 * 5 },
+      { queryKey: ["m-vids", mood.q, seed], queryFn: () => pipedSearch(mood.q, "music_videos"), staleTime: 1000 * 60 * 5 },
+      { queryKey: ["m-albums", mood.q, seed], queryFn: () => pipedSearch(mood.q, "music_albums"), staleTime: 1000 * 60 * 5 },
+      { queryKey: ["m-artists", mood.q, seed], queryFn: () => pipedSearch(mood.q, "music_artists"), staleTime: 1000 * 60 * 5 },
+      { queryKey: ["m-playlists", mood.q, seed], queryFn: () => pipedSearch(mood.q, "music_playlists"), staleTime: 1000 * 60 * 5 },
     ],
   });
 
@@ -77,53 +102,77 @@ export default function MusicScreen() {
   const isLoading = queries.every((q) => q.isLoading);
   const hero = songItems[0];
 
+  const handleMoodPress = (m: typeof MOODS[number]) => {
+    if (m.key === mood.key) {
+      // Re-tap: refresh content
+      setSeed(Date.now());
+    } else {
+      setMood(m);
+    }
+  };
+
   const webTop = Platform.OS === "web" ? 67 : 0;
+  const topPad = insets.top + webTop;
 
   return (
-    <View style={{ flex: 1, backgroundColor: C.bg, paddingTop: insets.top + webTop }}>
-      <View style={styles.header}>
-        <View style={styles.brandRow}>
-          <View style={[styles.brandCircle, { borderColor: C.accent }]}>
-            <Feather name="play" size={9} color={C.accent} style={{ marginLeft: 1 }} />
+    <View style={{ flex: 1, backgroundColor: C.bg }}>
+      <Animated.View
+        style={[
+          styles.headerWrap,
+          {
+            paddingTop: topPad,
+            backgroundColor: C.bg,
+            transform: [{ translateY: headerTranslate }],
+          },
+        ]}
+      >
+        <View style={styles.header}>
+          <View style={styles.brandRow}>
+            <View style={[styles.brandCircle, { borderColor: C.accent }]}>
+              <Feather name="play" size={9} color={C.accent} style={{ marginLeft: 1 }} />
+            </View>
+            <Text style={styles.brand}>Music</Text>
           </View>
-          <Text style={styles.brand}>Music</Text>
+          <View style={{ flex: 1 }} />
+          <Pressable hitSlop={10} onPress={() => setSeed(Date.now())} style={styles.iconBtn}>
+            <Feather name="refresh-cw" size={20} color="#fff" />
+          </Pressable>
+          <Pressable hitSlop={10} onPress={() => router.push("/search")} style={styles.iconBtn}>
+            <Feather name="search" size={22} color="#fff" />
+          </Pressable>
         </View>
-        <View style={{ flex: 1 }} />
-        <Pressable hitSlop={10} onPress={() => router.push("/search")} style={styles.iconBtn}>
-          <Feather name="search" size={22} color="#fff" />
-        </Pressable>
-      </View>
 
-      <ScrollView contentContainerStyle={{ paddingBottom: 220 }} showsVerticalScrollIndicator={false}>
-        <ScrollView
+        <FlatList
           horizontal
+          data={MOODS}
+          keyExtractor={(m) => m.key}
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.chipsRow}
-        >
-          {MOODS.map((m) => {
+          renderItem={({ item: m }) => {
             const active = mood.key === m.key;
             return (
               <Pressable
-                key={m.key}
-                onPress={() => setMood(m)}
+                onPress={() => handleMoodPress(m)}
                 style={[
                   styles.chip,
                   { backgroundColor: active ? "#fff" : "rgba(255,255,255,0.10)" },
                 ]}
               >
-                <Text
-                  style={[
-                    styles.chipText,
-                    { color: active ? "#000" : "#fff" },
-                  ]}
-                >
+                <Text style={[styles.chipText, { color: active ? "#000" : "#fff" }]}>
                   {m.key}
                 </Text>
               </Pressable>
             );
-          })}
-        </ScrollView>
+          }}
+        />
+      </Animated.View>
 
+      <Animated.ScrollView
+        contentContainerStyle={{ paddingTop: topPad + HEADER_HEIGHT, paddingBottom: 220 }}
+        showsVerticalScrollIndicator={false}
+        onScroll={onScroll}
+        scrollEventThrottle={16}
+      >
         {isLoading ? (
           <View style={styles.center}>
             <ActivityIndicator color="#fff" />
@@ -261,7 +310,7 @@ export default function MusicScreen() {
             ) : null}
           </>
         )}
-      </ScrollView>
+      </Animated.ScrollView>
     </View>
   );
 }
@@ -361,12 +410,19 @@ function filterStreams(items?: PipedSearchItem[]): PipedStreamItem[] {
 }
 
 const styles = StyleSheet.create({
+  headerWrap: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
+  },
   header: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 14,
     paddingVertical: 10,
-    gap: 10,
+    gap: 4,
   },
   brandRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   brandCircle: {
@@ -378,7 +434,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   brand: { fontSize: 20, fontFamily: "Inter_700Bold", color: "#fff" },
-  iconBtn: { padding: 6 },
+  iconBtn: { padding: 8 },
   chipsRow: { paddingHorizontal: 12, paddingVertical: 4, gap: 8 },
   chip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 999, marginRight: 8 },
   chipText: { fontSize: 13, fontFamily: "Inter_500Medium" },

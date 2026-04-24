@@ -2,9 +2,11 @@ import { Feather } from "@expo/vector-icons";
 import { useInfiniteQuery, useQueries, useQuery } from "@tanstack/react-query";
 import { Image } from "expo-image";
 import { useRouter } from "expo-router";
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
+  Dimensions,
   FlatList,
   Platform,
   Pressable,
@@ -12,6 +14,8 @@ import {
   StyleSheet,
   Text,
   View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -40,6 +44,7 @@ interface Chip {
 
 const CHIPS: Chip[] = [
   { key: "all", label: "All" },
+  { key: "shorts", label: "Shorts" },
   { key: "music", label: "Music", query: "music videos 2026", filter: "music_videos" },
   { key: "live", label: "Live", query: "live now", filter: "videos" },
   { key: "gaming", label: "Gaming", query: "gaming highlights 2026", filter: "videos" },
@@ -53,6 +58,7 @@ const CHIPS: Chip[] = [
 ];
 
 const REGIONS = ["BD", "US", "IN", "GB"] as const;
+const HEADER_HEIGHT = 96; // logo row + chips row
 
 function shuffle<T>(arr: T[]): T[] {
   const a = [...arr];
@@ -85,6 +91,26 @@ export default function HomeScreen() {
   const { history } = useLibrary();
   const [chip, setChip] = useState<Chip>(CHIPS[0]);
   const [seed, setSeed] = useState<number>(Date.now());
+
+  // Animated scroll-aware header (translates up on scroll down, reveals on scroll up)
+  const scrollY = useRef(new Animated.Value(0)).current;
+  const lastY = useRef(0);
+  const offsetY = useRef(0);
+  const headerTranslate = useRef(new Animated.Value(0)).current;
+  const onScroll = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const y = e.nativeEvent.contentOffset.y;
+      const dy = y - lastY.current;
+      lastY.current = y;
+      if (y < 0) return;
+      let next = offsetY.current + dy;
+      next = Math.max(0, Math.min(HEADER_HEIGHT, next));
+      offsetY.current = next;
+      headerTranslate.setValue(-next);
+      scrollY.setValue(y);
+    },
+    [headerTranslate, scrollY],
+  );
 
   // Pull videos from top-3 watched channels for "more like this"
   const topChannels = useMemo(() => {
@@ -139,7 +165,7 @@ export default function HomeScreen() {
       return out;
     },
     staleTime: 1000 * 60 * 10,
-    enabled: chip.key === "all",
+    enabled: chip.key === "all" || chip.key === "shorts",
   });
 
   const watchedSet = useMemo(() => new Set(history.map((h) => h.videoId)), [history]);
@@ -147,6 +173,7 @@ export default function HomeScreen() {
   const feed = useInfiniteQuery<PageData, Error, { pages: PageData[]; pageParams: (NextToken | null)[] }, ["home-feed", string, number], NextToken | null>({
     queryKey: ["home-feed", chip.key, seed],
     initialPageParam: null,
+    enabled: chip.key !== "shorts",
     queryFn: async ({ pageParam }): Promise<PageData> => {
       // Initial page (no token)
       if (!pageParam) {
@@ -231,7 +258,6 @@ export default function HomeScreen() {
     if (chip.key === "all" && shorts.length > 0) {
       for (let i = 0; i < allItems.length; i++) {
         result.push({ kind: "video", item: allItems[i] });
-        // Inject shelf after the 4th video
         if (i === 3) result.push({ kind: "shorts-shelf", items: shorts });
       }
     } else {
@@ -246,100 +272,169 @@ export default function HomeScreen() {
   };
 
   const webTop = Platform.OS === "web" ? 67 : 0;
+  const topPad = insets.top + webTop;
+  const win = Dimensions.get("window");
+  const shortColW = Math.max(160, (win.width - 36) / 2);
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.background, paddingTop: insets.top + webTop }}>
-      <View style={styles.topBar}>
-        <View style={[styles.logoMark, { backgroundColor: colors.primary }]}>
-          <Feather name="play" size={11} color="#fff" />
-        </View>
-        <Text style={[styles.brand, { color: colors.foreground }]}>Nixo</Text>
-        <View style={{ flex: 1 }}>
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      {/* Animated YouTube-style header */}
+      <Animated.View
+        style={[
+          styles.headerWrap,
+          {
+            paddingTop: topPad,
+            backgroundColor: colors.background,
+            transform: [{ translateY: headerTranslate }],
+            borderBottomColor: colors.border,
+          },
+        ]}
+      >
+        <View style={styles.topBar}>
+          <View style={[styles.logoMark, { backgroundColor: colors.primary }]}>
+            <Feather name="play" size={11} color="#fff" />
+          </View>
+          <Text style={[styles.brand, { color: colors.foreground }]}>Nixo</Text>
+          <View style={{ flex: 1 }} />
+          <Pressable hitSlop={10} onPress={() => router.push("/(tabs)/files")} style={styles.iconBtn}>
+            <Feather name="bookmark" size={20} color={colors.foreground} />
+          </Pressable>
           <SearchBar />
         </View>
-        <Pressable hitSlop={10} onPress={() => router.push("/(tabs)/files")} style={styles.iconBtn}>
-          <Feather name="bookmark" size={20} color={colors.foreground} />
-        </Pressable>
-      </View>
-
-      <FlatList
-        data={rows}
-        keyExtractor={(row, idx) =>
-          row.kind === "video" ? `${extractVideoId(row.item.url)}-${idx}` : `shelf-${idx}`
-        }
-        renderItem={({ item }) =>
-          item.kind === "video" ? (
-            <VideoCard item={item.item} variant="feed" />
-          ) : (
-            <ShortsShelf items={item.items} colors={colors} />
-          )
-        }
-        contentContainerStyle={{ paddingBottom: 220 }}
-        showsVerticalScrollIndicator={false}
-        onEndReachedThreshold={0.6}
-        onEndReached={() => {
-          if (feed.hasNextPage && !feed.isFetchingNextPage) feed.fetchNextPage();
-        }}
-        refreshControl={
-          <RefreshControl
-            refreshing={feed.isRefetching && !feed.isFetchingNextPage}
-            onRefresh={onRefresh}
-            tintColor={colors.primary}
-          />
-        }
-        ListHeaderComponent={
-          <FlatList
-            data={CHIPS}
-            keyExtractor={(c) => c.key}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.chipsRow}
-            renderItem={({ item }) => {
-              const active = chip.key === item.key;
-              return (
-                <Pressable
-                  onPress={() => setChip(item)}
+        <FlatList
+          data={CHIPS}
+          keyExtractor={(c) => c.key}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.chipsRow}
+          renderItem={({ item }) => {
+            const active = chip.key === item.key;
+            return (
+              <Pressable
+                onPress={() => setChip(item)}
+                style={[
+                  styles.chip,
+                  { backgroundColor: active ? colors.foreground : colors.secondary },
+                ]}
+              >
+                <Text
                   style={[
-                    styles.chip,
-                    { backgroundColor: active ? colors.foreground : colors.secondary },
+                    styles.chipText,
+                    { color: active ? colors.background : colors.foreground },
                   ]}
                 >
-                  <Text
-                    style={[
-                      styles.chipText,
-                      { color: active ? colors.background : colors.foreground },
-                    ]}
-                  >
-                    {item.label}
-                  </Text>
-                </Pressable>
-              );
-            }}
-          />
-        }
-        ListFooterComponent={
-          feed.isFetchingNextPage ? (
-            <View style={styles.footer}>
-              <ActivityIndicator color={colors.primary} />
-            </View>
-          ) : null
-        }
-        ListEmptyComponent={
-          feed.isLoading ? (
-            <View style={styles.center}>
-              <ActivityIndicator color={colors.primary} />
-            </View>
-          ) : feed.isError ? (
-            <View style={styles.center}>
-              <Text style={[styles.empty, { color: colors.mutedForeground }]}>
-                Couldn&apos;t load. Pull to refresh.
+                  {item.label}
+                </Text>
+              </Pressable>
+            );
+          }}
+        />
+      </Animated.View>
+
+      {chip.key === "shorts" ? (
+        // Shorts-only grid view
+        <FlatList
+          data={shortsShelf.data ?? []}
+          keyExtractor={(it, i) => `${extractVideoId(it.url)}-${i}`}
+          numColumns={2}
+          contentContainerStyle={{
+            paddingTop: topPad + HEADER_HEIGHT,
+            paddingBottom: 220,
+            paddingHorizontal: 8,
+          }}
+          columnWrapperStyle={{ gap: 10 }}
+          onScroll={onScroll}
+          scrollEventThrottle={16}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={shortsShelf.isFetching}
+              onRefresh={() => shortsShelf.refetch()}
+              tintColor={colors.primary}
+              progressViewOffset={topPad + HEADER_HEIGHT - 20}
+            />
+          }
+          renderItem={({ item }) => (
+            <Pressable
+              onPress={() => router.push(`/shorts?start=${extractVideoId(item.url)}`)}
+              style={[styles.shortCard, { width: shortColW }]}
+            >
+              <Image source={{ uri: item.thumbnail }} style={styles.shortThumb} contentFit="cover" />
+              <View style={styles.shortGradient} />
+              <Text numberOfLines={2} style={styles.shortTitle}>
+                {item.title}
               </Text>
-            </View>
-          ) : (
-            <Text style={[styles.empty, { color: colors.mutedForeground }]}>No videos.</Text>
-          )
-        }
-      />
+              <Text style={styles.shortViews} numberOfLines={1}>
+                {formatViews(item.views)}
+              </Text>
+            </Pressable>
+          )}
+          ListEmptyComponent={
+            shortsShelf.isLoading ? (
+              <View style={styles.center}>
+                <ActivityIndicator color={colors.primary} />
+              </View>
+            ) : (
+              <Text style={[styles.empty, { color: colors.mutedForeground }]}>No shorts yet.</Text>
+            )
+          }
+        />
+      ) : (
+        <FlatList
+          data={rows}
+          keyExtractor={(row, idx) =>
+            row.kind === "video" ? `${extractVideoId(row.item.url)}-${idx}` : `shelf-${idx}`
+          }
+          renderItem={({ item }) =>
+            item.kind === "video" ? (
+              <VideoCard item={item.item} variant="feed" />
+            ) : (
+              <ShortsShelf items={item.items} colors={colors} />
+            )
+          }
+          contentContainerStyle={{
+            paddingTop: topPad + HEADER_HEIGHT,
+            paddingBottom: 220,
+          }}
+          showsVerticalScrollIndicator={false}
+          onScroll={onScroll}
+          scrollEventThrottle={16}
+          onEndReachedThreshold={0.6}
+          onEndReached={() => {
+            if (feed.hasNextPage && !feed.isFetchingNextPage) feed.fetchNextPage();
+          }}
+          refreshControl={
+            <RefreshControl
+              refreshing={feed.isRefetching && !feed.isFetchingNextPage}
+              onRefresh={onRefresh}
+              tintColor={colors.primary}
+              progressViewOffset={topPad + HEADER_HEIGHT - 20}
+            />
+          }
+          ListFooterComponent={
+            feed.isFetchingNextPage ? (
+              <View style={styles.footer}>
+                <ActivityIndicator color={colors.primary} />
+              </View>
+            ) : null
+          }
+          ListEmptyComponent={
+            feed.isLoading ? (
+              <View style={styles.center}>
+                <ActivityIndicator color={colors.primary} />
+              </View>
+            ) : feed.isError ? (
+              <View style={styles.center}>
+                <Text style={[styles.empty, { color: colors.mutedForeground }]}>
+                  Couldn&apos;t load. Pull to refresh.
+                </Text>
+              </View>
+            ) : (
+              <Text style={[styles.empty, { color: colors.mutedForeground }]}>No videos.</Text>
+            )
+          }
+        />
+      )}
     </View>
   );
 }
@@ -397,16 +492,57 @@ function dedupe(items: PipedSearchItem[] | PipedStreamItem[], watched: Set<strin
 }
 
 const styles = StyleSheet.create({
-  topBar: { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, gap: 6, paddingTop: 4 },
+  headerWrap: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  topBar: { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, gap: 4, paddingTop: 4 },
   logoMark: { width: 22, height: 22, borderRadius: 4, alignItems: "center", justifyContent: "center" },
-  brand: { fontSize: 17, fontFamily: "Inter_700Bold", letterSpacing: -0.3 },
-  iconBtn: { padding: 6 },
-  chipsRow: { paddingHorizontal: 12, paddingVertical: 12, gap: 8 },
+  brand: { fontSize: 18, fontFamily: "Inter_700Bold", letterSpacing: -0.3, marginLeft: 6 },
+  iconBtn: { padding: 8 },
+  chipsRow: { paddingHorizontal: 12, paddingVertical: 10, gap: 8 },
   chip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8, marginRight: 8 },
   chipText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   center: { padding: 60, alignItems: "center" },
   footer: { padding: 24, alignItems: "center" },
   empty: { padding: 24, textAlign: "center", fontFamily: "Inter_400Regular" },
+  shortCard: {
+    aspectRatio: 9 / 16,
+    borderRadius: 14,
+    overflow: "hidden",
+    backgroundColor: "#000",
+    marginBottom: 10,
+    position: "relative",
+  },
+  shortThumb: { ...StyleSheet.absoluteFillObject, width: "100%", height: "100%" },
+  shortGradient: {
+    position: "absolute",
+    left: 0, right: 0, bottom: 0,
+    height: 80,
+    backgroundColor: "rgba(0,0,0,0.55)",
+  },
+  shortTitle: {
+    position: "absolute",
+    left: 8,
+    right: 8,
+    bottom: 22,
+    color: "#fff",
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    lineHeight: 15,
+  },
+  shortViews: {
+    position: "absolute",
+    left: 8,
+    bottom: 6,
+    color: "rgba(255,255,255,0.85)",
+    fontSize: 10,
+    fontFamily: "Inter_400Regular",
+  },
 });
 
 const shelfStyles = StyleSheet.create({

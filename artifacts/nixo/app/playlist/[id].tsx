@@ -6,6 +6,7 @@ import React from "react";
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { BottomNav } from "@/components/BottomNav";
 import { VideoActionSheet } from "@/components/VideoActionSheet";
 import { usePlayer } from "@/contexts/PlayerContext";
 import { useLibrary } from "@/contexts/LibraryContext";
@@ -157,6 +158,7 @@ export default function PlaylistScreen() {
           )}
         />
       )}
+      <BottomNav />
       {menu ? (
         <VideoActionSheet
           visible={!!menu}
