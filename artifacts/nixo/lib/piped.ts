@@ -223,10 +223,11 @@ export function pipedPlaylist(playlistId: string) {
   return pipedFetch<PipedPlaylistDetails>(`/playlists/${playlistId}`);
 }
 
-export function mediaProxy(url: string): string {
+export function mediaProxy(url: string, mime?: string): string {
   if (Platform.OS !== "web") return url;
   if (!url) return url;
-  return `${apiRoot()}/proxy?url=${encodeURIComponent(url)}`;
+  const m = mime ? `&mime=${encodeURIComponent(mime)}` : "";
+  return `${apiRoot()}/proxy?url=${encodeURIComponent(url)}${m}`;
 }
 
 export function timeAgo(input?: string | number | null): string {

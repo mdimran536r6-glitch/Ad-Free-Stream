@@ -10,7 +10,7 @@ import { extractVideoId, formatDuration, formatViews, timeAgo, type PipedStreamI
 
 interface Props {
   item: PipedStreamItem;
-  variant?: "list" | "grid" | "feed";
+  variant?: "list" | "grid" | "feed" | "short";
 }
 
 export function VideoCard({ item, variant = "feed" }: Props) {
@@ -31,6 +31,29 @@ export function VideoCard({ item, variant = "feed" }: Props) {
       channelUrl={item.uploaderUrl}
     />
   );
+
+  if (variant === "short") {
+    return (
+      <>
+        <Pressable
+          onPress={() => router.push(`/shorts?start=${id}`)}
+          style={({ pressed }) => [styles.shortCard, { opacity: pressed ? 0.85 : 1 }]}
+        >
+          <View style={styles.shortThumbWrap}>
+            <Image source={{ uri: item.thumbnail }} style={styles.shortThumb} contentFit="cover" />
+            <View style={styles.shortGradient} />
+            <Text numberOfLines={2} style={styles.shortTitle}>
+              {item.title}
+            </Text>
+            <Text numberOfLines={1} style={styles.shortViews}>
+              {formatViews(item.views)}
+            </Text>
+          </View>
+        </Pressable>
+        {sheet}
+      </>
+    );
+  }
 
   if (variant === "grid") {
     return (
@@ -164,4 +187,42 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4,
   },
   durationText: { color: "#fff", fontSize: 11, fontFamily: "Inter_500Medium" },
+
+  // shorts (vertical tile)
+  shortCard: { width: 160, marginRight: 10 },
+  shortThumbWrap: {
+    width: "100%",
+    aspectRatio: 9 / 16,
+    borderRadius: 12,
+    overflow: "hidden",
+    backgroundColor: "#000",
+    position: "relative",
+  },
+  shortThumb: { width: "100%", height: "100%" },
+  shortGradient: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 80,
+    backgroundColor: "rgba(0,0,0,0.55)",
+  },
+  shortTitle: {
+    position: "absolute",
+    left: 8,
+    right: 8,
+    bottom: 22,
+    color: "#fff",
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    lineHeight: 15,
+  },
+  shortViews: {
+    position: "absolute",
+    left: 8,
+    bottom: 6,
+    color: "rgba(255,255,255,0.85)",
+    fontSize: 10,
+    fontFamily: "Inter_400Regular",
+  },
 });

@@ -37,13 +37,15 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         setIsLoading(true);
         setCurrent(track);
         let uri = track.localUri ?? null;
+        let mime: string | undefined;
         if (!uri) {
           const details = await pipedStream(track.videoId);
           const audio = bestAudio(details.audioStreams);
           if (!audio) throw new Error("No audio stream available");
           uri = audio.url;
+          mime = audio.mimeType;
         }
-        player.replace({ uri: mediaProxy(uri) });
+        player.replace({ uri: mediaProxy(uri, mime) });
         player.play();
       } catch (err) {
         console.warn("[player] play failed", err);

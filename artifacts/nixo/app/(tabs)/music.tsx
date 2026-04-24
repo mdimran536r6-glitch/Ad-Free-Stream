@@ -1,6 +1,7 @@
 import { Feather } from "@expo/vector-icons";
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useQueries } from "@tanstack/react-query";
 import { Image } from "expo-image";
+import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import React, { useState } from "react";
 import {
@@ -17,7 +18,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { VideoActionSheet } from "@/components/VideoActionSheet";
 import { usePlayer } from "@/contexts/PlayerContext";
-import { useColors } from "@/hooks/useColors";
 import { extractVideoId, pipedSearch, type PipedSearchItem, type PipedStreamItem } from "@/lib/piped";
 
 const MOODS = [
@@ -31,8 +31,17 @@ const MOODS = [
   { key: "Devotional", q: "devotional songs" },
 ];
 
+// YT-Music style fixed dark palette
+const C = {
+  bg: "#030303",
+  surface: "rgba(255,255,255,0.04)",
+  surfaceAlt: "rgba(255,255,255,0.07)",
+  text: "#ffffff",
+  subtext: "rgba(255,255,255,0.65)",
+  accent: "#ff0844",
+};
+
 export default function MusicScreen() {
-  const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { play } = usePlayer();
@@ -66,17 +75,22 @@ export default function MusicScreen() {
   >[];
 
   const isLoading = queries.every((q) => q.isLoading);
+  const hero = songItems[0];
 
   const webTop = Platform.OS === "web" ? 67 : 0;
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.background, paddingTop: insets.top + webTop }}>
+    <View style={{ flex: 1, backgroundColor: C.bg, paddingTop: insets.top + webTop }}>
       <View style={styles.header}>
-        <View style={[styles.brandDot, { backgroundColor: colors.primary }]} />
-        <Text style={[styles.brand, { color: colors.foreground }]}>Music</Text>
+        <View style={styles.brandRow}>
+          <View style={[styles.brandCircle, { borderColor: C.accent }]}>
+            <Feather name="play" size={9} color={C.accent} style={{ marginLeft: 1 }} />
+          </View>
+          <Text style={styles.brand}>Music</Text>
+        </View>
         <View style={{ flex: 1 }} />
         <Pressable hitSlop={10} onPress={() => router.push("/search")} style={styles.iconBtn}>
-          <Feather name="search" size={22} color={colors.foreground} />
+          <Feather name="search" size={22} color="#fff" />
         </Pressable>
       </View>
 
@@ -94,13 +108,13 @@ export default function MusicScreen() {
                 onPress={() => setMood(m)}
                 style={[
                   styles.chip,
-                  { backgroundColor: active ? colors.primary : colors.secondary },
+                  { backgroundColor: active ? "#fff" : "rgba(255,255,255,0.10)" },
                 ]}
               >
                 <Text
                   style={[
                     styles.chipText,
-                    { color: active ? colors.primaryForeground : colors.foreground },
+                    { color: active ? "#000" : "#fff" },
                   ]}
                 >
                   {m.key}
@@ -112,13 +126,15 @@ export default function MusicScreen() {
 
         {isLoading ? (
           <View style={styles.center}>
-            <ActivityIndicator color={colors.primary} />
+            <ActivityIndicator color="#fff" />
           </View>
         ) : (
           <>
+            {hero ? <Hero item={hero} onPlay={play} /> : null}
+
             {songItems.length > 0 ? (
               <>
-                <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Quick picks</Text>
+                <SectionHeader title="Quick picks" />
                 <View style={styles.quickGrid}>
                   {songItems.slice(0, 8).map((it) => (
                     <SongTile key={it.url} item={it} onPlay={play} />
@@ -127,36 +143,9 @@ export default function MusicScreen() {
               </>
             ) : null}
 
-            {videoItems.length > 0 ? (
-              <>
-                <RowHeader title="Music videos" colors={colors} />
-                <FlatList
-                  horizontal
-                  data={videoItems.slice(0, 14)}
-                  keyExtractor={(it) => it.url}
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.hList}
-                  renderItem={({ item }) => (
-                    <Pressable
-                      onPress={() => router.push(`/video/${extractVideoId(item.url)}`)}
-                      style={styles.albumCard}
-                    >
-                      <Image source={{ uri: item.thumbnail }} style={styles.albumArt} contentFit="cover" />
-                      <Text numberOfLines={2} style={[styles.albumTitle, { color: colors.foreground }]}>
-                        {item.title}
-                      </Text>
-                      <Text numberOfLines={1} style={[styles.albumArtist, { color: colors.mutedForeground }]}>
-                        {item.uploaderName}
-                      </Text>
-                    </Pressable>
-                  )}
-                />
-              </>
-            ) : null}
-
             {albumItems.length > 0 ? (
               <>
-                <RowHeader title="Albums & playlists" colors={colors} />
+                <SectionHeader title="Albums & playlists" />
                 <FlatList
                   horizontal
                   data={albumItems.slice(0, 14)}
@@ -172,11 +161,38 @@ export default function MusicScreen() {
                       style={styles.albumCard}
                     >
                       <Image source={{ uri: item.thumbnail }} style={styles.albumArt} contentFit="cover" />
-                      <Text numberOfLines={2} style={[styles.albumTitle, { color: colors.foreground }]}>
+                      <Text numberOfLines={2} style={styles.albumTitle}>
                         {item.name}
                       </Text>
-                      <Text numberOfLines={1} style={[styles.albumArtist, { color: colors.mutedForeground }]}>
+                      <Text numberOfLines={1} style={styles.albumArtist}>
                         {item.uploaderName ?? `${item.videos} songs`}
+                      </Text>
+                    </Pressable>
+                  )}
+                />
+              </>
+            ) : null}
+
+            {videoItems.length > 0 ? (
+              <>
+                <SectionHeader title="Music videos" />
+                <FlatList
+                  horizontal
+                  data={videoItems.slice(0, 14)}
+                  keyExtractor={(it) => it.url}
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.hList}
+                  renderItem={({ item }) => (
+                    <Pressable
+                      onPress={() => router.push(`/video/${extractVideoId(item.url)}`)}
+                      style={styles.mvCard}
+                    >
+                      <Image source={{ uri: item.thumbnail }} style={styles.mvArt} contentFit="cover" />
+                      <Text numberOfLines={2} style={styles.albumTitle}>
+                        {item.title}
+                      </Text>
+                      <Text numberOfLines={1} style={styles.albumArtist}>
+                        {item.uploaderName}
                       </Text>
                     </Pressable>
                   )}
@@ -186,7 +202,7 @@ export default function MusicScreen() {
 
             {artistItems.length > 0 ? (
               <>
-                <RowHeader title="Artists" colors={colors} />
+                <SectionHeader title="Artists" />
                 <FlatList
                   horizontal
                   data={artistItems.slice(0, 14)}
@@ -202,8 +218,11 @@ export default function MusicScreen() {
                       style={styles.artistCard}
                     >
                       <Image source={{ uri: item.thumbnail }} style={styles.artistAvatar} contentFit="cover" />
-                      <Text numberOfLines={1} style={[styles.albumTitle, { color: colors.foreground, textAlign: "center" }]}>
+                      <Text numberOfLines={1} style={[styles.albumTitle, { textAlign: "center" }]}>
                         {item.name}
+                      </Text>
+                      <Text numberOfLines={1} style={[styles.albumArtist, { textAlign: "center" }]}>
+                        Artist
                       </Text>
                     </Pressable>
                   )}
@@ -213,7 +232,7 @@ export default function MusicScreen() {
 
             {playlistItems.length > 0 ? (
               <>
-                <RowHeader title="Recommended playlists" colors={colors} />
+                <SectionHeader title="Recommended playlists" />
                 <FlatList
                   horizontal
                   data={playlistItems.slice(0, 14)}
@@ -229,8 +248,11 @@ export default function MusicScreen() {
                       style={styles.albumCard}
                     >
                       <Image source={{ uri: item.thumbnail }} style={styles.albumArt} contentFit="cover" />
-                      <Text numberOfLines={2} style={[styles.albumTitle, { color: colors.foreground }]}>
+                      <Text numberOfLines={2} style={styles.albumTitle}>
                         {item.name}
+                      </Text>
+                      <Text numberOfLines={1} style={styles.albumArtist}>
+                        {item.uploaderName ?? `${item.videos} songs`}
                       </Text>
                     </Pressable>
                   )}
@@ -244,6 +266,48 @@ export default function MusicScreen() {
   );
 }
 
+function Hero({
+  item,
+  onPlay,
+}: {
+  item: PipedStreamItem;
+  onPlay: (t: { videoId: string; title: string; artist: string; thumbnail: string }) => void;
+}) {
+  const id = extractVideoId(item.url);
+  return (
+    <View style={styles.hero}>
+      <Image source={{ uri: item.thumbnail }} style={StyleSheet.absoluteFill} contentFit="cover" blurRadius={30} />
+      <LinearGradient
+        colors={["rgba(0,0,0,0.05)", "rgba(0,0,0,0.55)", "rgba(3,3,3,0.95)"]}
+        style={StyleSheet.absoluteFill}
+      />
+      <View style={styles.heroBody}>
+        <Image source={{ uri: item.thumbnail }} style={styles.heroArt} contentFit="cover" />
+        <View style={{ flex: 1, gap: 4 }}>
+          <Text style={styles.heroLabel}>Top pick for you</Text>
+          <Text numberOfLines={2} style={styles.heroTitle}>
+            {item.title}
+          </Text>
+          <Text numberOfLines={1} style={styles.heroArtist}>
+            {item.uploaderName}
+          </Text>
+          <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+            <Pressable
+              onPress={() =>
+                onPlay({ videoId: id, title: item.title, artist: item.uploaderName, thumbnail: item.thumbnail })
+              }
+              style={styles.heroPlay}
+            >
+              <Feather name="play" size={14} color="#000" />
+              <Text style={styles.heroPlayText}>Play</Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </View>
+  );
+}
+
 function SongTile({
   item,
   onPlay,
@@ -251,7 +315,6 @@ function SongTile({
   item: PipedStreamItem;
   onPlay: (t: { videoId: string; title: string; artist: string; thumbnail: string }) => void;
 }) {
-  const colors = useColors();
   const [menu, setMenu] = useState(false);
   const id = extractVideoId(item.url);
   return (
@@ -260,19 +323,19 @@ function SongTile({
         onPress={() =>
           onPlay({ videoId: id, title: item.title, artist: item.uploaderName, thumbnail: item.thumbnail })
         }
-        style={[styles.quickRow, { backgroundColor: colors.secondary }]}
+        style={[styles.quickRow, { backgroundColor: C.surface }]}
       >
         <Image source={{ uri: item.thumbnail }} style={styles.quickThumb} contentFit="cover" />
         <View style={{ flex: 1, paddingHorizontal: 10, paddingVertical: 6 }}>
-          <Text numberOfLines={1} style={[styles.quickTitle, { color: colors.foreground }]}>
+          <Text numberOfLines={1} style={styles.quickTitle}>
             {item.title}
           </Text>
-          <Text numberOfLines={1} style={[styles.quickArtist, { color: colors.mutedForeground }]}>
+          <Text numberOfLines={1} style={styles.quickArtist}>
             {item.uploaderName}
           </Text>
         </View>
         <Pressable hitSlop={10} onPress={() => setMenu(true)} style={{ paddingHorizontal: 10 }}>
-          <Feather name="more-vertical" size={18} color={colors.mutedForeground} />
+          <Feather name="more-vertical" size={18} color={C.subtext} />
         </Pressable>
       </Pressable>
       <VideoActionSheet
@@ -289,8 +352,8 @@ function SongTile({
   );
 }
 
-function RowHeader({ title, colors }: { title: string; colors: ReturnType<typeof useColors> }) {
-  return <Text style={[styles.sectionTitle, { color: colors.foreground }]}>{title}</Text>;
+function SectionHeader({ title }: { title: string }) {
+  return <Text style={styles.sectionTitle}>{title}</Text>;
 }
 
 function filterStreams(items?: PipedSearchItem[]): PipedStreamItem[] {
@@ -298,27 +361,79 @@ function filterStreams(items?: PipedSearchItem[]): PipedStreamItem[] {
 }
 
 const styles = StyleSheet.create({
-  header: { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 8, gap: 10 },
-  brandDot: { width: 22, height: 22, borderRadius: 11 },
-  brand: { fontSize: 20, fontFamily: "Inter_700Bold" },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    gap: 10,
+  },
+  brandRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  brandCircle: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 2,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  brand: { fontSize: 20, fontFamily: "Inter_700Bold", color: "#fff" },
   iconBtn: { padding: 6 },
-  chipsRow: { paddingHorizontal: 12, paddingVertical: 10, gap: 8 },
+  chipsRow: { paddingHorizontal: 12, paddingVertical: 4, gap: 8 },
   chip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 999, marginRight: 8 },
   chipText: { fontSize: 13, fontFamily: "Inter_500Medium" },
-  sectionTitle: { fontSize: 17, fontFamily: "Inter_700Bold", paddingHorizontal: 14, marginTop: 18, marginBottom: 8 },
+
+  hero: {
+    margin: 14,
+    borderRadius: 16,
+    overflow: "hidden",
+    minHeight: 160,
+    backgroundColor: "#1a1a1a",
+  },
+  heroBody: { flexDirection: "row", padding: 14, gap: 14 },
+  heroArt: { width: 110, height: 110, borderRadius: 8, backgroundColor: "#000" },
+  heroLabel: { color: "rgba(255,255,255,0.7)", fontSize: 11, fontFamily: "Inter_500Medium", textTransform: "uppercase", letterSpacing: 0.5 },
+  heroTitle: { color: "#fff", fontSize: 18, fontFamily: "Inter_700Bold", lineHeight: 22 },
+  heroArtist: { color: "rgba(255,255,255,0.8)", fontSize: 13, fontFamily: "Inter_400Regular" },
+  heroPlay: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#fff",
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 999,
+  },
+  heroPlayText: { color: "#000", fontSize: 13, fontFamily: "Inter_700Bold" },
+
+  sectionTitle: {
+    fontSize: 18,
+    fontFamily: "Inter_700Bold",
+    paddingHorizontal: 14,
+    marginTop: 22,
+    marginBottom: 10,
+    color: "#fff",
+  },
   quickGrid: { flexDirection: "row", flexWrap: "wrap", paddingHorizontal: 8, gap: 8 },
   quickRow: {
-    width: "48%", flexDirection: "row", alignItems: "center", borderRadius: 10, overflow: "hidden", marginBottom: 8,
+    width: "48%",
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: 10,
+    overflow: "hidden",
+    marginBottom: 8,
   },
   quickThumb: { width: 56, height: 56 },
-  quickTitle: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
-  quickArtist: { fontSize: 11, fontFamily: "Inter_400Regular" },
+  quickTitle: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: "#fff" },
+  quickArtist: { fontSize: 11, fontFamily: "Inter_400Regular", color: C.subtext },
   hList: { paddingHorizontal: 12, gap: 12 },
-  albumCard: { width: 140, gap: 4, marginRight: 12 },
-  albumArt: { width: 140, height: 140, borderRadius: 10, backgroundColor: "#000" },
-  albumTitle: { fontSize: 12, fontFamily: "Inter_600SemiBold", marginTop: 6 },
-  albumArtist: { fontSize: 11, fontFamily: "Inter_400Regular" },
-  artistCard: { width: 110, alignItems: "center", marginRight: 12, gap: 6 },
-  artistAvatar: { width: 100, height: 100, borderRadius: 50, backgroundColor: "#000" },
+  albumCard: { width: 150, marginRight: 12 },
+  albumArt: { width: 150, height: 150, borderRadius: 6, backgroundColor: "#000" },
+  mvCard: { width: 220, marginRight: 12 },
+  mvArt: { width: 220, height: 124, borderRadius: 6, backgroundColor: "#000" },
+  albumTitle: { fontSize: 13, fontFamily: "Inter_600SemiBold", marginTop: 8, color: "#fff" },
+  albumArtist: { fontSize: 12, fontFamily: "Inter_400Regular", color: C.subtext, marginTop: 2 },
+  artistCard: { width: 120, alignItems: "center", marginRight: 12, gap: 6 },
+  artistAvatar: { width: 110, height: 110, borderRadius: 55, backgroundColor: "#000" },
   center: { padding: 60, alignItems: "center" },
 });

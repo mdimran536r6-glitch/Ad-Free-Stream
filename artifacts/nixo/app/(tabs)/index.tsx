@@ -1,5 +1,6 @@
 import { Feather } from "@expo/vector-icons";
-import { useInfiniteQuery, useQueries } from "@tanstack/react-query";
+import { useInfiniteQuery, useQueries, useQuery } from "@tanstack/react-query";
+import { Image } from "expo-image";
 import { useRouter } from "expo-router";
 import React, { useMemo, useState } from "react";
 import {
@@ -20,6 +21,7 @@ import { useLibrary } from "@/contexts/LibraryContext";
 import { useColors } from "@/hooks/useColors";
 import {
   extractVideoId,
+  formatViews,
   pipedChannel,
   pipedSearch,
   pipedSearchNextPage,
@@ -38,7 +40,6 @@ interface Chip {
 
 const CHIPS: Chip[] = [
   { key: "all", label: "All" },
-  { key: "shorts", label: "Shorts" },
   { key: "music", label: "Music", query: "music videos 2026", filter: "music_videos" },
   { key: "live", label: "Live", query: "live now", filter: "videos" },
   { key: "gaming", label: "Gaming", query: "gaming highlights 2026", filter: "videos" },
@@ -73,6 +74,10 @@ interface PageData {
   nextpage: NextToken | null;
 }
 
+type FeedRow =
+  | { kind: "video"; item: PipedStreamItem }
+  | { kind: "shorts-shelf"; items: PipedStreamItem[] };
+
 export default function HomeScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -106,6 +111,37 @@ export default function HomeScreen() {
     return channelQueries.flatMap((q) => q.data?.relatedStreams ?? []).slice(0, 18);
   }, [channelQueries]);
 
+  // Shorts shelf for "All" feed
+  const shortsShelf = useQuery({
+    queryKey: ["home-shorts-shelf"],
+    queryFn: async () => {
+      const seeds = ["shorts viral", "funny shorts", "music shorts"];
+      const pick = shuffle(seeds).slice(0, 2);
+      const [trending, ...searches] = await Promise.all([
+        Promise.allSettled(REGIONS.map((r) => pipedTrending(r))),
+        ...pick.map((q) => pipedSearch(q, "videos").catch(() => null)),
+      ]);
+      const fromTrending = trending
+        .flatMap((r) => (r.status === "fulfilled" ? r.value : []))
+        .filter((v) => (v as { isShort?: boolean }).isShort || (v.duration > 0 && v.duration <= 60));
+      const fromSearch = searches.flatMap((r) =>
+        r ? (r.items ?? []).filter((i): i is PipedStreamItem => i.type === "stream" && i.duration > 0 && i.duration <= 60) : [],
+      );
+      const seen = new Set<string>();
+      const out: PipedStreamItem[] = [];
+      for (const it of [...shuffle(fromTrending), ...fromSearch]) {
+        const id = extractVideoId(it.url);
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        out.push(it);
+        if (out.length >= 12) break;
+      }
+      return out;
+    },
+    staleTime: 1000 * 60 * 10,
+    enabled: chip.key === "all",
+  });
+
   const watchedSet = useMemo(() => new Set(history.map((h) => h.videoId)), [history]);
 
   const feed = useInfiniteQuery<PageData, Error, { pages: PageData[]; pageParams: (NextToken | null)[] }, ["home-feed", string, number], NextToken | null>({
@@ -115,7 +151,6 @@ export default function HomeScreen() {
       // Initial page (no token)
       if (!pageParam) {
         if (chip.key === "all") {
-          // Use search seeds (Piped trending is mostly live right now) + region trending as bonus
           const seedQueries = [
             "trending videos this week",
             "popular 2026",
@@ -123,7 +158,6 @@ export default function HomeScreen() {
             "best moments 2026",
             "most viewed today",
           ];
-          // pick 3 random seeds for variety
           const picks = shuffle([...seedQueries]).slice(0, 3);
           const [searchResults, trendingResults] = await Promise.all([
             Promise.allSettled(picks.map((q) => pipedSearch(q, "videos"))),
@@ -131,12 +165,12 @@ export default function HomeScreen() {
           ]);
           const fromSearch = searchResults.flatMap((r) =>
             r.status === "fulfilled"
-              ? (r.value.items ?? []).filter((i): i is PipedStreamItem => i.type === "stream" && i.duration > 0)
+              ? (r.value.items ?? []).filter((i): i is PipedStreamItem => i.type === "stream" && i.duration > 60)
               : [],
           );
           const fromTrending = trendingResults
             .flatMap((r) => (r.status === "fulfilled" ? r.value : []))
-            .filter((v) => v.duration > 0 && !(v as { isShort?: boolean }).isShort);
+            .filter((v) => v.duration > 60 && !(v as { isShort?: boolean }).isShort);
           const nextSeed = picks[0];
           const merged = dedupe(
             [...recommendations, ...shuffle([...fromTrending, ...fromSearch])],
@@ -145,23 +179,6 @@ export default function HomeScreen() {
           return {
             items: merged,
             nextpage: { kind: "search", q: nextSeed, token: null, filter: "videos" },
-          };
-        }
-        if (chip.key === "shorts") {
-          // Pull shorts via search and trending
-          const trendingResults = await Promise.allSettled(REGIONS.map((r) => pipedTrending(r)));
-          const trendingShorts = trendingResults
-            .flatMap((r) => (r.status === "fulfilled" ? r.value : []))
-            .filter((v) => (v as { isShort?: boolean }).isShort);
-          let searched: PipedStreamItem[] = [];
-          try {
-            const r = await pipedSearch("shorts viral", "videos");
-            searched = (r.items ?? []).filter((i): i is PipedStreamItem => i.type === "stream" && (i.duration <= 60 && i.duration > 0));
-          } catch { /* ignore */ }
-          const merged = dedupe([...shuffle(trendingShorts), ...searched], watchedSet);
-          return {
-            items: merged,
-            nextpage: { kind: "search", q: "shorts viral", token: null, filter: "videos" },
           };
         }
         // Specific category: search + nextpage
@@ -207,8 +224,25 @@ export default function HomeScreen() {
     return out;
   }, [feed.data]);
 
+  // Build rows: every ~6 videos, inject a Shorts shelf if available (only for All)
+  const rows = useMemo<FeedRow[]>(() => {
+    const result: FeedRow[] = [];
+    const shorts = shortsShelf.data ?? [];
+    if (chip.key === "all" && shorts.length > 0) {
+      for (let i = 0; i < allItems.length; i++) {
+        result.push({ kind: "video", item: allItems[i] });
+        // Inject shelf after the 4th video
+        if (i === 3) result.push({ kind: "shorts-shelf", items: shorts });
+      }
+    } else {
+      for (const it of allItems) result.push({ kind: "video", item: it });
+    }
+    return result;
+  }, [allItems, shortsShelf.data, chip.key]);
+
   const onRefresh = () => {
     setSeed(Date.now());
+    shortsShelf.refetch();
   };
 
   const webTop = Platform.OS === "web" ? 67 : 0;
@@ -229,9 +263,17 @@ export default function HomeScreen() {
       </View>
 
       <FlatList
-        data={allItems}
-        keyExtractor={(item, idx) => `${extractVideoId(item.url)}-${idx}`}
-        renderItem={({ item }) => <VideoCard item={item} variant="feed" />}
+        data={rows}
+        keyExtractor={(row, idx) =>
+          row.kind === "video" ? `${extractVideoId(row.item.url)}-${idx}` : `shelf-${idx}`
+        }
+        renderItem={({ item }) =>
+          item.kind === "video" ? (
+            <VideoCard item={item.item} variant="feed" />
+          ) : (
+            <ShortsShelf items={item.items} colors={colors} />
+          )
+        }
         contentContainerStyle={{ paddingBottom: 220 }}
         showsVerticalScrollIndicator={false}
         onEndReachedThreshold={0.6}
@@ -302,6 +344,45 @@ export default function HomeScreen() {
   );
 }
 
+function ShortsShelf({ items, colors }: { items: PipedStreamItem[]; colors: ReturnType<typeof useColors> }) {
+  const router = useRouter();
+  return (
+    <View style={shelfStyles.wrap}>
+      <View style={shelfStyles.header}>
+        <View style={[shelfStyles.iconBubble, { backgroundColor: "#E53935" }]}>
+          <Feather name="play" size={12} color="#fff" />
+        </View>
+        <Text style={[shelfStyles.title, { color: colors.foreground }]}>Shorts</Text>
+        <View style={{ flex: 1 }} />
+      </View>
+      <FlatList
+        horizontal
+        data={items}
+        keyExtractor={(it) => extractVideoId(it.url)}
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={shelfStyles.list}
+        renderItem={({ item }) => (
+          <Pressable
+            onPress={() => router.push(`/shorts?start=${extractVideoId(item.url)}`)}
+            style={shelfStyles.card}
+          >
+            <View style={shelfStyles.thumbWrap}>
+              <Image source={{ uri: item.thumbnail }} style={shelfStyles.thumb} contentFit="cover" />
+              <View style={shelfStyles.gradient} />
+              <Text numberOfLines={2} style={shelfStyles.thumbTitle}>
+                {item.title}
+              </Text>
+              <Text style={shelfStyles.thumbViews} numberOfLines={1}>
+                {formatViews(item.views)}
+              </Text>
+            </View>
+          </Pressable>
+        )}
+      />
+    </View>
+  );
+}
+
 function dedupe(items: PipedSearchItem[] | PipedStreamItem[], watched: Set<string>): PipedStreamItem[] {
   const out: PipedStreamItem[] = [];
   const seen = new Set<string>();
@@ -326,4 +407,52 @@ const styles = StyleSheet.create({
   center: { padding: 60, alignItems: "center" },
   footer: { padding: 24, alignItems: "center" },
   empty: { padding: 24, textAlign: "center", fontFamily: "Inter_400Regular" },
+});
+
+const shelfStyles = StyleSheet.create({
+  wrap: { paddingTop: 8, paddingBottom: 12, marginVertical: 6, borderTopWidth: 0 },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    gap: 8,
+    marginBottom: 8,
+  },
+  iconBubble: { width: 22, height: 22, borderRadius: 4, alignItems: "center", justifyContent: "center" },
+  title: { fontSize: 17, fontFamily: "Inter_700Bold" },
+  list: { paddingHorizontal: 8, gap: 8 },
+  card: { width: 160, marginRight: 8 },
+  thumbWrap: {
+    width: 160,
+    aspectRatio: 9 / 16,
+    borderRadius: 12,
+    overflow: "hidden",
+    backgroundColor: "#000",
+    position: "relative",
+  },
+  thumb: { width: "100%", height: "100%" },
+  gradient: {
+    position: "absolute",
+    left: 0, right: 0, bottom: 0,
+    height: 80,
+    backgroundColor: "rgba(0,0,0,0.55)",
+  },
+  thumbTitle: {
+    position: "absolute",
+    left: 8,
+    right: 8,
+    bottom: 22,
+    color: "#fff",
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    lineHeight: 15,
+  },
+  thumbViews: {
+    position: "absolute",
+    left: 8,
+    bottom: 6,
+    color: "rgba(255,255,255,0.85)",
+    fontSize: 10,
+    fontFamily: "Inter_400Regular",
+  },
 });

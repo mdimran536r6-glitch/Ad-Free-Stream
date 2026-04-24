@@ -36,6 +36,11 @@ function RootLayoutNav() {
       <Stack.Screen name="search" options={{ headerShown: false }} />
       <Stack.Screen name="video/[id]" options={{ headerShown: false }} />
       <Stack.Screen name="channel/[id]" options={{ headerShown: false }} />
+      <Stack.Screen name="playlist/[id]" options={{ headerShown: false }} />
+      <Stack.Screen
+        name="shorts"
+        options={{ headerShown: false, animation: "slide_from_bottom" }}
+      />
       <Stack.Screen
         name="player"
         options={{ presentation: "modal", headerShown: false, animation: "slide_from_bottom" }}

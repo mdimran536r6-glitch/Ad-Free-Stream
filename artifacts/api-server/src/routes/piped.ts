@@ -62,18 +62,36 @@ router.get("/proxy", async (req, res) => {
   try {
     const headers: Record<string, string> = {};
     if (req.headers.range) headers["Range"] = String(req.headers.range);
+    // Some upstream CDNs key on the User-Agent. Use a reasonable browser UA.
+    headers["User-Agent"] =
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
     const upstream = await fetch(url, { headers });
     if (!upstream.body) {
       res.status(upstream.status || 502).end();
       return;
     }
     res.status(upstream.status);
-    const passthrough = ["content-type", "content-length", "content-range", "accept-ranges", "last-modified", "etag"];
+    const passthrough = ["content-length", "content-range", "accept-ranges", "last-modified", "etag"];
     for (const h of passthrough) {
       const v = upstream.headers.get(h);
       if (v) res.setHeader(h, v);
     }
+    // Normalize content-type so the browser plays inline instead of downloading.
+    // YouTube googlevideo URLs sometimes return application/octet-stream or
+    // attach Content-Disposition: attachment which forces download.
+    const upstreamCt = upstream.headers.get("content-type") ?? "";
+    const mimeHint = String(req.query.mime ?? "");
+    let ct = mimeHint || upstreamCt;
+    if (!ct || /octet-stream|application\/binary/i.test(ct)) {
+      // Try to infer from URL ?mime= param (googlevideo uses this).
+      const m = /[?&]mime=([^&]+)/.exec(url);
+      if (m) ct = decodeURIComponent(m[1]);
+    }
+    if (ct) res.setHeader("Content-Type", ct);
+    // Critically: never forward Content-Disposition — that triggers a download.
+    res.setHeader("Content-Disposition", "inline");
     res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges");
     res.setHeader("Cache-Control", "public, max-age=3600");
     await pipeline(Readable.fromWeb(upstream.body as Parameters<typeof Readable.fromWeb>[0]), res);
   } catch (err) {
@@ -212,7 +230,7 @@ router.get("/streams/:id", async (req, res) => {
       if (!r.ok) continue;
       const ct = r.headers.get("content-type") ?? "";
       if (!ct.includes("json")) continue;
-      pipedData = await r.json();
+      pipedData = (await r.json()) as Record<string, unknown> | null;
       break;
     } catch {
       // ignore

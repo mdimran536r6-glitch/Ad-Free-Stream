@@ -38,12 +38,24 @@ Ad-free YouTube/YT Music style app. Bengali-friendly. Tabs: Home / Music / Downl
 - Asset rewriter (`lib/piped.ts:unpipeUrl/rewriteAssets`) bypasses dead `pipedproxy.wireway.ch` by rewriting `https://<piped-proxy>/...?host=X` → `https://X/...` for thumbnails/avatars (preserves stream URLs).
 
 ### Home (`app/(tabs)/index.tsx`)
-- Chips: All, Shorts, Music, Live, Gaming, News, Comedy, Sports, Tech, Podcasts, Movies, Vlogs.
-- "All" = 3 random search seeds + 4-region trending in parallel (Piped trending currently 100% live globally; search seeds drive variety). Live & shorts filtered out.
+- Chips: All, Music, Live, Gaming, News, Comedy, Sports, Tech, Podcasts, Movies, Vlogs (no "Shorts" chip — Shorts now appear as a horizontal shelf injected after the 4th video on "All").
+- "All" = 3 random search seeds + 4-region trending in parallel; videos with `duration <= 60` filtered out (those go in the Shorts shelf).
+- Shorts shelf (`home-shorts-shelf` query) pulls from regional trending + "shorts viral / funny shorts / music shorts" search seeds, items with `duration <= 60` or `isShort`. Tapping a tile opens `/shorts?start=<videoId>`.
+
+### Shorts (`app/shorts.tsx`)
+- Vertical paged FlatList by screen height; `pagingEnabled`, `snapToInterval`. Each page: full-bleed `useVideoPlayer` with `loop=true`, autoplay only on the active page (70% viewport threshold via `onViewableItemsChanged`).
+- Right-side actions column: avatar+subscribe, like, comments, save, share, audio. Bottom overlay: title, uploader, view count.
+- Accepts `?start=<videoId>` to seed first page. Registered in `_layout.tsx` with slide-from-bottom modal animation.
 
 ### Music (`app/(tabs)/music.tsx`)
-- Sections: Quick picks, Albums & playlists, New singles, Trending artists, Made for you. Sub-chips: Trending/Bangla/Hindi/English/Lo-fi/Workout/Chill/Devotional.
+- YT Music dark style: `#030303` bg, `#ff0844` accent. White brand mark with circular play. Pill chips (Trending/Bangla/Hindi/English/Lo-fi/Workout/Chill/Devotional).
+- Hero "Top pick for you" card with blurred-thumbnail bg + Play button. Sections: Quick picks (2-col grid), Albums, Music videos, Artists, Made for you.
 - Clicking album/playlist → `app/playlist/[id].tsx` with **Download all** (m4a loop + per-item progress).
+
+### Audio playback fix (critical)
+- `/api/proxy` strips `Content-Disposition` headers from upstream and forces `Content-Disposition: inline`. Normalizes `Content-Type` from the `?mime=` query hint or URL extension to keep browsers from treating audio/mp4 as a download. Sends a desktop-Chrome User-Agent upstream and exposes `Content-Length, Content-Range, Accept-Ranges` for seeking.
+- `mediaProxy(url, mime?)` in `lib/piped.ts` passes the mime hint; `PlayerContext.play()` forwards `audio.mimeType`.
+- Verified end-to-end: HEAD on a proxied audio URL returns `206 Partial Content`, `Content-Type: audio/mp4`, `Content-Disposition: inline`.
 
 ### Downloads (`lib/downloads.ts`)
 - Web: anchor + `/api/download` for forced attachment.
