@@ -58,7 +58,9 @@ const CHIPS: Chip[] = [
 ];
 
 const REGIONS = ["BD", "US", "IN", "GB"] as const;
-const HEADER_HEIGHT = 96; // logo row + chips row
+const LOGO_HEIGHT = 48; // collapses on scroll
+const CHIPS_HEIGHT = 48; // sticky always
+const HEADER_HEIGHT = LOGO_HEIGHT + CHIPS_HEIGHT;
 
 function shuffle<T>(arr: T[]): T[] {
   const a = [...arr];
@@ -92,11 +94,10 @@ export default function HomeScreen() {
   const [chip, setChip] = useState<Chip>(CHIPS[0]);
   const [seed, setSeed] = useState<number>(Date.now());
 
-  // Animated scroll-aware header (translates up on scroll down, reveals on scroll up)
-  const scrollY = useRef(new Animated.Value(0)).current;
+  // YouTube-style: logo bar collapses on scroll, chips stay sticky
   const lastY = useRef(0);
   const offsetY = useRef(0);
-  const headerTranslate = useRef(new Animated.Value(0)).current;
+  const logoTranslate = useRef(new Animated.Value(0)).current;
   const onScroll = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
       const y = e.nativeEvent.contentOffset.y;
@@ -104,12 +105,11 @@ export default function HomeScreen() {
       lastY.current = y;
       if (y < 0) return;
       let next = offsetY.current + dy;
-      next = Math.max(0, Math.min(HEADER_HEIGHT, next));
+      next = Math.max(0, Math.min(LOGO_HEIGHT, next));
       offsetY.current = next;
-      headerTranslate.setValue(-next);
-      scrollY.setValue(y);
+      logoTranslate.setValue(-next);
     },
-    [headerTranslate, scrollY],
+    [logoTranslate],
   );
 
   // Pull videos from top-3 watched channels for "more like this"
@@ -278,29 +278,17 @@ export default function HomeScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      {/* Animated YouTube-style header */}
-      <Animated.View
+      {/* Sticky chips bar (always visible, like YouTube) */}
+      <View
         style={[
-          styles.headerWrap,
+          styles.stickyChipsWrap,
           {
-            paddingTop: topPad,
+            top: topPad + LOGO_HEIGHT,
             backgroundColor: colors.background,
-            transform: [{ translateY: headerTranslate }],
             borderBottomColor: colors.border,
           },
         ]}
       >
-        <View style={styles.topBar}>
-          <View style={[styles.logoMark, { backgroundColor: colors.primary }]}>
-            <Feather name="play" size={11} color="#fff" />
-          </View>
-          <Text style={[styles.brand, { color: colors.foreground }]}>Nixo</Text>
-          <View style={{ flex: 1 }} />
-          <Pressable hitSlop={10} onPress={() => router.push("/(tabs)/files")} style={styles.iconBtn}>
-            <Feather name="bookmark" size={20} color={colors.foreground} />
-          </Pressable>
-          <SearchBar />
-        </View>
         <FlatList
           data={CHIPS}
           keyExtractor={(c) => c.key}
@@ -329,6 +317,30 @@ export default function HomeScreen() {
             );
           }}
         />
+      </View>
+
+      {/* Logo bar (auto-hides on scroll) */}
+      <Animated.View
+        style={[
+          styles.logoWrap,
+          {
+            paddingTop: topPad,
+            backgroundColor: colors.background,
+            transform: [{ translateY: logoTranslate }],
+          },
+        ]}
+      >
+        <View style={styles.topBar}>
+          <View style={[styles.logoMark, { backgroundColor: colors.primary }]}>
+            <Feather name="play" size={11} color="#fff" />
+          </View>
+          <Text style={[styles.brand, { color: colors.foreground }]}>Nixo</Text>
+          <View style={{ flex: 1 }} />
+          <Pressable hitSlop={10} onPress={() => router.push("/(tabs)/files")} style={styles.iconBtn}>
+            <Feather name="bookmark" size={20} color={colors.foreground} />
+          </Pressable>
+          <SearchBar />
+        </View>
       </Animated.View>
 
       {chip.key === "shorts" ? (
@@ -492,19 +504,33 @@ function dedupe(items: PipedSearchItem[] | PipedStreamItem[], watched: Set<strin
 }
 
 const styles = StyleSheet.create({
-  headerWrap: {
+  logoWrap: {
     position: "absolute",
     top: 0,
     left: 0,
     right: 0,
+    zIndex: 11,
+  },
+  stickyChipsWrap: {
+    position: "absolute",
+    left: 0,
+    right: 0,
     zIndex: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
+    height: CHIPS_HEIGHT,
+    justifyContent: "center",
   },
-  topBar: { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, gap: 4, paddingTop: 4 },
+  topBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    gap: 4,
+    height: LOGO_HEIGHT,
+  },
   logoMark: { width: 22, height: 22, borderRadius: 4, alignItems: "center", justifyContent: "center" },
   brand: { fontSize: 18, fontFamily: "Inter_700Bold", letterSpacing: -0.3, marginLeft: 6 },
   iconBtn: { padding: 8 },
-  chipsRow: { paddingHorizontal: 12, paddingVertical: 10, gap: 8 },
+  chipsRow: { paddingHorizontal: 12, gap: 8, alignItems: "center" },
   chip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8, marginRight: 8 },
   chipText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   center: { padding: 60, alignItems: "center" },

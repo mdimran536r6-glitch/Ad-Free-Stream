@@ -1,4 +1,5 @@
 import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
+import { router } from "expo-router";
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
 import { bestAudio, mediaProxy, pipedStream } from "@/lib/piped";
@@ -36,6 +37,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       try {
         setIsLoading(true);
         setCurrent(track);
+        // Open player screen immediately so user gets visual feedback
+        try { router.push("/player"); } catch {}
         let uri = track.localUri ?? null;
         let mime: string | undefined;
         if (!uri) {
@@ -46,6 +49,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           mime = audio.mimeType;
         }
         player.replace({ uri: mediaProxy(uri, mime) });
+        try { player.muted = false; } catch {}
         player.play();
       } catch (err) {
         console.warn("[player] play failed", err);

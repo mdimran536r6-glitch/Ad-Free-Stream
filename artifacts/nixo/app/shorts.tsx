@@ -194,8 +194,10 @@ function ShortItem({ item, active, height, width }: ShortItemProps) {
 
   const player = useVideoPlayer(sourceUri ?? null, (p) => {
     p.loop = true;
-    p.muted = false;
+    // Web blocks autoplay with sound — start muted, user can tap to unmute
+    p.muted = Platform.OS === "web";
   });
+  const [muted, setMuted] = useState(Platform.OS === "web");
 
   useEffect(() => {
     if (!sourceUri) return;
@@ -209,6 +211,14 @@ function ShortItem({ item, active, height, width }: ShortItemProps) {
       } catch {}
     }
   }, [active, sourceUri, player]);
+
+  const toggleMute = useCallback(() => {
+    try {
+      const next = !player.muted;
+      player.muted = next;
+      setMuted(next);
+    } catch {}
+  }, [player]);
 
   const title = data?.title ?? item.title;
   const uploader = data?.uploader ?? item.uploaderName;
@@ -295,6 +305,12 @@ function ShortItem({ item, active, height, width }: ShortItemProps) {
           }}
         />
         <ActionBtn icon="share-2" color="#fff" label="Share" onPress={onShare} />
+        <ActionBtn
+          icon={muted ? "volume-x" : "volume-2"}
+          color="#fff"
+          label={muted ? "Tap" : "Sound"}
+          onPress={toggleMute}
+        />
         <ActionBtn
           icon="headphones"
           color="#fff"

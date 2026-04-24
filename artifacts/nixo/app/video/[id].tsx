@@ -40,6 +40,7 @@ export default function VideoScreen() {
   const { play } = usePlayer();
   const { recordWatch } = useLibrary();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [subscribed, setSubscribed] = useState(false);
 
   const stream = useQuery({
     queryKey: ["stream", id],
@@ -50,13 +51,15 @@ export default function VideoScreen() {
 
   const sourceUri = useMemo(() => {
     if (!stream.data) return null;
-    if (stream.data.hls) return mediaProxy(stream.data.hls);
     const v = pickVideoStream(stream.data.videoStreams ?? [], 480);
-    return v?.url ? mediaProxy(v.url) : null;
+    if (v?.url) return mediaProxy(v.url, v.mimeType);
+    if (stream.data.hls) return mediaProxy(stream.data.hls);
+    return null;
   }, [stream.data]);
 
   const player = useVideoPlayer(sourceUri ?? null, (p) => {
     p.loop = false;
+    if (Platform.OS === "web") p.muted = true; // web autoplay policy
     p.play();
   });
 
@@ -76,40 +79,43 @@ export default function VideoScreen() {
 
   if (!id) return null;
   const channelId = data ? extractChannelId(data.uploaderUrl ?? "") : "";
-
-  // Video extends edge-to-edge under status bar; controls overlay use insets.top
   const webTop = Platform.OS === "web" ? 67 : 0;
+  const topPad = insets.top + webTop;
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <StatusBar style="light" translucent backgroundColor="transparent" />
-      <View style={[styles.videoBox, { paddingTop: webTop }]}>
-        {sourceUri ? (
-          <VideoView player={player} style={styles.video} contentFit="contain" nativeControls />
-        ) : data ? (
-          <Image source={{ uri: data.thumbnailUrl }} style={styles.video} contentFit="cover" />
-        ) : (
-          <View style={[styles.video, styles.center]}>
-            <ActivityIndicator color="#fff" />
-          </View>
-        )}
-        <Pressable
-          hitSlop={12}
-          onPress={() => router.back()}
-          style={[styles.backOverlay, { top: insets.top + webTop + 8 }]}
-        >
-          <Feather name="chevron-down" size={24} color="#fff" />
-        </Pressable>
-      </View>
+      <StatusBar style={colors.background === "#000000" ? "light" : "dark"} />
 
-      <View style={styles.actionsRow}>
-        <View style={{ flex: 1 }} />
+      {/* Top action bar: back + title + headphones + 3-dot */}
+      <View
+        style={[
+          styles.topBar,
+          {
+            paddingTop: topPad + 4,
+            backgroundColor: colors.background,
+            borderBottomColor: colors.border,
+          },
+        ]}
+      >
+        <Pressable hitSlop={10} onPress={() => router.back()} style={styles.iconBtn}>
+          <Feather name="arrow-left" size={22} color={colors.foreground} />
+        </Pressable>
+        <Text style={[styles.topTitle, { color: colors.foreground }]} numberOfLines={1}>
+          Nixo
+        </Text>
         <Pressable
           hitSlop={10}
           onPress={() => {
             if (data) {
-              player.pause();
-              play({ videoId: id, title: data.title, artist: data.uploader, thumbnail: data.thumbnailUrl });
+              try {
+                player.pause();
+              } catch {}
+              play({
+                videoId: id,
+                title: data.title,
+                artist: data.uploader,
+                thumbnail: data.thumbnailUrl,
+              });
             }
           }}
           style={styles.iconBtn}
@@ -121,12 +127,28 @@ export default function VideoScreen() {
         </Pressable>
       </View>
 
+      {/* Video player area */}
+      <View style={styles.videoBox}>
+        {sourceUri ? (
+          <VideoView player={player} style={styles.video} contentFit="contain" nativeControls />
+        ) : data ? (
+          <Image source={{ uri: data.thumbnailUrl }} style={styles.video} contentFit="cover" />
+        ) : (
+          <View style={[styles.video, styles.center]}>
+            <ActivityIndicator color="#fff" />
+          </View>
+        )}
+      </View>
+
       {stream.isLoading || !data ? (
         <View style={styles.center}>
           <ActivityIndicator color={colors.primary} />
         </View>
       ) : (
-        <ScrollView contentContainerStyle={{ paddingBottom: 140 }}>
+        <ScrollView
+          contentContainerStyle={{ paddingBottom: 140 }}
+          showsVerticalScrollIndicator={false}
+        >
           <View style={styles.metaBox}>
             <Text style={[styles.title, { color: colors.foreground }]}>{data.title}</Text>
             <Text style={[styles.subMeta, { color: colors.mutedForeground }]}>
@@ -134,22 +156,42 @@ export default function VideoScreen() {
             </Text>
           </View>
 
-          <Pressable
-            onPress={() => router.push(`/channel/${channelId}`)}
-            style={[styles.channelRow, { borderColor: colors.border }]}
-          >
-            <Image source={{ uri: data.uploaderAvatar }} style={styles.avatar} contentFit="cover" />
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.channelName, { color: colors.foreground }]} numberOfLines={1}>
-                {data.uploader}
+          <View style={[styles.channelRow, { borderColor: colors.border }]}>
+            <Pressable
+              onPress={() => router.push(`/channel/${channelId}`)}
+              style={styles.channelLeft}
+            >
+              <Image source={{ uri: data.uploaderAvatar }} style={styles.avatar} contentFit="cover" />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.channelName, { color: colors.foreground }]} numberOfLines={1}>
+                  {data.uploader}
+                </Text>
+                <Text style={[styles.channelSub, { color: colors.mutedForeground }]} numberOfLines={1}>
+                  {data.uploaderSubscriberCount >= 1000
+                    ? `${(data.uploaderSubscriberCount / 1000).toFixed(0)}K subscribers`
+                    : `${data.uploaderSubscriberCount} subscribers`}
+                </Text>
+              </View>
+            </Pressable>
+            <Pressable
+              onPress={() => setSubscribed((s) => !s)}
+              style={[
+                styles.subBtn,
+                {
+                  backgroundColor: subscribed ? colors.secondary : colors.foreground,
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.subBtnText,
+                  { color: subscribed ? colors.foreground : colors.background },
+                ]}
+              >
+                {subscribed ? "Subscribed" : "Subscribe"}
               </Text>
-              <Text style={[styles.channelSub, { color: colors.mutedForeground }]} numberOfLines={1}>
-                {data.uploaderSubscriberCount >= 1000
-                  ? `${(data.uploaderSubscriberCount / 1000).toFixed(0)}K subscribers`
-                  : `${data.uploaderSubscriberCount} subscribers`}
-              </Text>
-            </View>
-          </Pressable>
+            </Pressable>
+          </View>
 
           <View style={styles.section}>
             <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Up next</Text>
@@ -179,32 +221,45 @@ export default function VideoScreen() {
 }
 
 const styles = StyleSheet.create({
-  actionsRow: { flexDirection: "row", alignItems: "center", paddingHorizontal: 4, paddingVertical: 4 },
-  iconBtn: { padding: 10 },
-  videoBox: { width: "100%", aspectRatio: 16 / 9, backgroundColor: "#000", position: "relative" },
-  backOverlay: {
-    position: "absolute", left: 8,
-    width: 38, height: 38, borderRadius: 19,
-    backgroundColor: "rgba(0,0,0,0.55)",
-    alignItems: "center", justifyContent: "center",
+  topBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 4,
+    paddingBottom: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: 2,
   },
+  iconBtn: { padding: 10 },
+  topTitle: { flex: 1, fontSize: 16, fontFamily: "Inter_700Bold", letterSpacing: -0.2, marginLeft: 4 },
+  videoBox: { width: "100%", aspectRatio: 16 / 9, backgroundColor: "#000" },
   video: { width: "100%", height: "100%" },
   center: { alignItems: "center", justifyContent: "center", padding: 40 },
-  metaBox: { padding: 16, gap: 6 },
-  title: { fontSize: 17, fontFamily: "Inter_700Bold", lineHeight: 22 },
+  metaBox: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 10, gap: 6 },
+  title: { fontSize: 16, fontFamily: "Inter_700Bold", lineHeight: 22 },
   subMeta: { fontSize: 12, fontFamily: "Inter_400Regular" },
   channelRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderTopWidth: 1,
     borderBottomWidth: 1,
+    gap: 12,
   },
-  avatar: { width: 40, height: 40, borderRadius: 20 },
+  channelLeft: { flex: 1, flexDirection: "row", alignItems: "center", gap: 12 },
+  avatar: { width: 38, height: 38, borderRadius: 19 },
   channelName: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   channelSub: { fontSize: 12, fontFamily: "Inter_400Regular" },
+  subBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 999,
+  },
+  subBtnText: {
+    fontSize: 13,
+    fontFamily: "Inter_700Bold",
+    letterSpacing: 0.3,
+  },
   section: { marginTop: 12 },
   sectionTitle: {
     fontSize: 16,
