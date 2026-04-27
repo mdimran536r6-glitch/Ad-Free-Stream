@@ -1,9 +1,9 @@
 import { Feather } from "@expo/vector-icons";
-import { useQueries } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -21,10 +21,18 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { VideoActionSheet } from "@/components/VideoActionSheet";
 import { usePlayer } from "@/contexts/PlayerContext";
 import { useColors } from "@/hooks/useColors";
-import { extractVideoId, pipedSearch, type PipedSearchItem, type PipedStreamItem } from "@/lib/piped";
+import {
+  extractChannelId,
+  extractVideoId,
+  pipedSearch,
+  pipedTrending,
+  type PipedSearchItem,
+  type PipedStreamItem,
+} from "@/lib/piped";
 
-const MOODS = [
-  { key: "Trending", q: "trending songs 2026" },
+type Mood = { key: string; q: string };
+const MOODS: Mood[] = [
+  { key: "Trending", q: "" },
   { key: "Bangla", q: "bangla songs new" },
   { key: "Hindi", q: "bollywood hits" },
   { key: "English", q: "top hits english" },
@@ -35,6 +43,51 @@ const MOODS = [
   { key: "Romantic", q: "romantic songs new" },
   { key: "Party", q: "party songs" },
 ];
+
+// Worldwide regions for global trending music
+const MUSIC_REGIONS = ["US", "GB", "IN", "BD", "JP", "KR", "BR", "DE", "FR", "MX"] as const;
+
+// Heuristic: is this trending item a music track? (filter out shorts/news/clips)
+const MUSIC_TITLE_RX =
+  /\b(official\s+(music\s+)?video|official\s+audio|lyrics?|lyric\s+video|music\s+video|mv|song|audio|visualizer|cover|remix|live\s+performance)\b|\(official|\[official|【official|\[mv\]|【mv】/i;
+const MUSIC_CHANNEL_RX = /(VEVO|- Topic|Official|Music|Records|Recordings|Studios)$/i;
+
+function isMusicLike(it: PipedStreamItem): boolean {
+  if (!it || !it.title) return false;
+  if (it.duration && (it.duration < 60 || it.duration > 900)) return false;
+  if (MUSIC_TITLE_RX.test(it.title)) return true;
+  if (it.uploaderName && MUSIC_CHANNEL_RX.test(it.uploaderName)) return true;
+  return false;
+}
+
+function dedupeByVideoId(items: PipedStreamItem[]): PipedStreamItem[] {
+  const seen = new Set<string>();
+  const out: PipedStreamItem[] = [];
+  for (const it of items) {
+    const id = extractVideoId(it.url);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(it);
+  }
+  return out;
+}
+
+function shuffle<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function formatCount(n?: number | null): string {
+  if (!n || n <= 0) return "";
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return `${n}`;
+}
 
 const LOGO_HEIGHT = 52;
 const CHIPS_HEIGHT = 48;
@@ -80,34 +133,91 @@ export default function MusicScreen() {
     }).start();
   }, [headerTranslate]);
 
+  const isTrending = mood.key === "Trending";
+
+  // Worldwide trending music — fan out across regions, dedupe, music-filter.
+  const trendingQ = useQuery({
+    queryKey: ["m-global-trending", seed],
+    enabled: isTrending,
+    staleTime: 1000 * 60 * 10,
+    queryFn: async () => {
+      const settled = await Promise.allSettled(
+        MUSIC_REGIONS.map((r) => pipedTrending(r)),
+      );
+      const flat: PipedStreamItem[] = [];
+      for (const s of settled) {
+        if (s.status === "fulfilled" && Array.isArray(s.value)) {
+          for (const it of s.value) {
+            if (it && it.type === "stream") flat.push(it);
+          }
+        }
+      }
+      const music = dedupeByVideoId(flat).filter(isMusicLike);
+      return shuffle(music);
+    },
+  });
+
+  // Search-based mood feeds (skipped when trending mode is active)
+  const searchEnabled = !isTrending;
   const queries = useQueries({
     queries: [
-      { queryKey: ["m-songs", mood.q, seed], queryFn: () => pipedSearch(mood.q, "music_songs"), staleTime: 1000 * 60 * 5 },
-      { queryKey: ["m-vids", mood.q, seed], queryFn: () => pipedSearch(mood.q, "music_videos"), staleTime: 1000 * 60 * 5 },
-      { queryKey: ["m-albums", mood.q, seed], queryFn: () => pipedSearch(mood.q, "music_albums"), staleTime: 1000 * 60 * 5 },
-      { queryKey: ["m-artists", mood.q, seed], queryFn: () => pipedSearch(mood.q, "music_artists"), staleTime: 1000 * 60 * 5 },
-      { queryKey: ["m-playlists", mood.q, seed], queryFn: () => pipedSearch(mood.q, "music_playlists"), staleTime: 1000 * 60 * 5 },
+      { queryKey: ["m-songs", mood.q, seed], queryFn: () => pipedSearch(mood.q, "music_songs"), staleTime: 1000 * 60 * 5, enabled: searchEnabled },
+      { queryKey: ["m-vids", mood.q, seed], queryFn: () => pipedSearch(mood.q, "music_videos"), staleTime: 1000 * 60 * 5, enabled: searchEnabled },
+      { queryKey: ["m-albums", mood.q, seed], queryFn: () => pipedSearch(mood.q, "music_albums"), staleTime: 1000 * 60 * 5, enabled: searchEnabled },
+      { queryKey: ["m-artists", mood.q, seed], queryFn: () => pipedSearch(mood.q, "music_artists"), staleTime: 1000 * 60 * 5, enabled: searchEnabled },
+      { queryKey: ["m-playlists", mood.q, seed], queryFn: () => pipedSearch(mood.q, "music_playlists"), staleTime: 1000 * 60 * 5, enabled: searchEnabled },
+    ],
+  });
+
+  // For Trending mode, fall back to a worldwide artist/album probe so the
+  // "Artists / Albums" shelves are not empty. Cheap because it's a single search.
+  const trendingExtras = useQueries({
+    queries: [
+      { queryKey: ["m-tr-artists", seed], queryFn: () => pipedSearch("top artists worldwide", "music_artists"), staleTime: 1000 * 60 * 30, enabled: isTrending },
+      { queryKey: ["m-tr-albums", seed], queryFn: () => pipedSearch("top albums 2026", "music_albums"), staleTime: 1000 * 60 * 30, enabled: isTrending },
+      { queryKey: ["m-tr-playlists", seed], queryFn: () => pipedSearch("top music playlists", "music_playlists"), staleTime: 1000 * 60 * 30, enabled: isTrending },
     ],
   });
 
   const [songs, vids, albums, artists, playlists] = queries;
+  const [trArtists, trAlbums, trPlaylists] = trendingExtras;
 
-  const songItems = filterStreams(songs.data?.items);
-  const videoItems = filterStreams(vids.data?.items);
-  const albumItems = (albums.data?.items ?? []).filter((i) => i.type === "playlist") as Extract<
+  // SONGS / VIDEOS shelves
+  const songItems = useMemo<PipedStreamItem[]>(() => {
+    if (isTrending) return trendingQ.data ?? [];
+    return filterStreams(songs.data?.items);
+  }, [isTrending, trendingQ.data, songs.data]);
+
+  const videoItems = useMemo<PipedStreamItem[]>(() => {
+    if (isTrending) {
+      // Re-use trending pool — show longer/MV-style entries first
+      return [...(trendingQ.data ?? [])]
+        .sort((a, b) => (b.duration ?? 0) - (a.duration ?? 0))
+        .slice(0, 20);
+    }
+    return filterStreams(vids.data?.items);
+  }, [isTrending, trendingQ.data, vids.data]);
+
+  // ALBUMS / ARTISTS / PLAYLISTS shelves
+  const albumsSrc = isTrending ? trAlbums.data?.items : albums.data?.items;
+  const artistsSrc = isTrending ? trArtists.data?.items : artists.data?.items;
+  const playlistsSrc = isTrending ? trPlaylists.data?.items : playlists.data?.items;
+
+  const albumItems = (albumsSrc ?? []).filter((i) => i.type === "playlist") as Extract<
     PipedSearchItem,
     { type: "playlist" }
   >[];
-  const artistItems = (artists.data?.items ?? []).filter((i) => i.type === "channel") as Extract<
-    PipedSearchItem,
-    { type: "channel" }
-  >[];
-  const playlistItems = (playlists.data?.items ?? []).filter((i) => i.type === "playlist") as Extract<
+  const artistItems = (artistsSrc ?? []).filter(
+    (i) => i.type === "channel" && !!extractChannelId(i.url),
+  ) as Extract<PipedSearchItem, { type: "channel" }>[];
+  const playlistItems = (playlistsSrc ?? []).filter((i) => i.type === "playlist") as Extract<
     PipedSearchItem,
     { type: "playlist" }
   >[];
 
-  const isLoading = queries.every((q) => q.isLoading);
+  const isLoading = isTrending
+    ? trendingQ.isLoading
+    : queries.every((q) => q.isLoading);
   const hero = songItems[0];
 
   const handleMoodPress = (m: typeof MOODS[number]) => {
@@ -278,23 +388,27 @@ export default function MusicScreen() {
                   keyExtractor={(it) => it.url}
                   showsHorizontalScrollIndicator={false}
                   contentContainerStyle={styles.hList}
-                  renderItem={({ item }) => (
-                    <Pressable
-                      onPress={() => {
-                        const cid = item.url.replace("/channel/", "");
-                        router.push(`/channel/${cid}`);
-                      }}
-                      style={styles.artistCard}
-                    >
-                      <Image source={{ uri: item.thumbnail }} style={styles.artistAvatar} contentFit="cover" />
-                      <Text numberOfLines={1} style={[styles.albumTitle, { color: colors.foreground, textAlign: "center" }]}>
-                        {item.name}
-                      </Text>
-                      <Text numberOfLines={1} style={[styles.albumArtist, { color: colors.mutedForeground, textAlign: "center" }]}>
-                        Artist
-                      </Text>
-                    </Pressable>
-                  )}
+                  renderItem={({ item }) => {
+                    const cid = extractChannelId(item.url);
+                    const subs = formatCount(item.subscribers);
+                    return (
+                      <Pressable
+                        onPress={() => {
+                          if (!cid) return;
+                          router.push(`/channel/${cid}`);
+                        }}
+                        style={styles.artistCard}
+                      >
+                        <Image source={{ uri: item.thumbnail }} style={styles.artistAvatar} contentFit="cover" />
+                        <Text numberOfLines={1} style={[styles.albumTitle, { color: colors.foreground, textAlign: "center" }]}>
+                          {item.name}
+                        </Text>
+                        <Text numberOfLines={1} style={[styles.albumArtist, { color: colors.mutedForeground, textAlign: "center" }]}>
+                          {subs ? `${subs} subscribers` : "Artist"}
+                        </Text>
+                      </Pressable>
+                    );
+                  }}
                 />
               </>
             ) : null}
