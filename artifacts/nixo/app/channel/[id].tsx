@@ -6,6 +6,7 @@ import React, { useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -36,6 +37,8 @@ export default function ChannelScreen() {
 
   if (!id) return null;
   const data = channel.data;
+  const webTop = Platform.OS === "web" ? 67 : 0;
+  const topPad = insets.top + webTop;
 
   const Header = (
     <View>
@@ -107,8 +110,17 @@ export default function ChannelScreen() {
   );
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.background, paddingTop: insets.top }}>
-      <View style={styles.headerRow}>
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <View
+        style={[
+          styles.headerRow,
+          {
+            paddingTop: topPad + 4,
+            backgroundColor: colors.background,
+            borderBottomColor: colors.border,
+          },
+        ]}
+      >
         <Pressable hitSlop={10} onPress={() => router.back()} style={styles.iconBtn}>
           <Feather name="arrow-left" size={22} color={colors.foreground} />
         </Pressable>
@@ -137,8 +149,15 @@ export default function ChannelScreen() {
 }
 
 const styles = StyleSheet.create({
-  headerRow: { flexDirection: "row", alignItems: "center", paddingHorizontal: 4, paddingVertical: 4, gap: 6 },
-  headerTitle: { flex: 1, fontSize: 16, fontFamily: "Inter_600SemiBold" },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 4,
+    paddingBottom: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: 2,
+  },
+  headerTitle: { flex: 1, fontSize: 16, fontFamily: "Inter_700Bold", letterSpacing: -0.2, marginLeft: 4 },
   iconBtn: { padding: 10 },
   center: { padding: 40, alignItems: "center" },
   banner: { width: "100%", aspectRatio: 16 / 5 },

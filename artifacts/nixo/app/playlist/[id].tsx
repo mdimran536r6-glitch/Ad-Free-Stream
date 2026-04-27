@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React from "react";
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, FlatList, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { BottomNav } from "@/components/BottomNav";
@@ -63,6 +63,8 @@ export default function PlaylistScreen() {
 
   if (!id) return null;
   const data = q.data;
+  const webTop = Platform.OS === "web" ? 67 : 0;
+  const topPad = insets.top + webTop;
 
   const Header = data ? (
     <View style={styles.header}>
@@ -110,8 +112,17 @@ export default function PlaylistScreen() {
   ) : null;
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.background, paddingTop: insets.top }}>
-      <View style={styles.topRow}>
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <View
+        style={[
+          styles.topRow,
+          {
+            paddingTop: topPad + 4,
+            backgroundColor: colors.background,
+            borderBottomColor: colors.border,
+          },
+        ]}
+      >
         <Pressable hitSlop={10} onPress={() => router.back()} style={styles.iconBtn}>
           <Feather name="arrow-left" size={22} color={colors.foreground} />
         </Pressable>
@@ -176,8 +187,15 @@ export default function PlaylistScreen() {
 }
 
 const styles = StyleSheet.create({
-  topRow: { flexDirection: "row", alignItems: "center", paddingHorizontal: 4, paddingVertical: 4, gap: 6 },
-  topTitle: { flex: 1, fontSize: 15, fontFamily: "Inter_600SemiBold" },
+  topRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 4,
+    paddingBottom: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: 2,
+  },
+  topTitle: { flex: 1, fontSize: 16, fontFamily: "Inter_700Bold", letterSpacing: -0.2, marginLeft: 4 },
   iconBtn: { padding: 10 },
   center: { padding: 60, alignItems: "center" },
   header: { alignItems: "center", paddingHorizontal: 24, paddingTop: 12, paddingBottom: 16, gap: 6 },

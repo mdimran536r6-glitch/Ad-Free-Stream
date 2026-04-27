@@ -208,7 +208,9 @@ async function resolveWithYtDlp(videoId: string) {
     return data;
   })();
   ytPending.set(videoId, promise);
-  promise.finally(() => ytPending.delete(videoId));
+  // Detach cleanup so a rejected `promise` never bubbles up as an
+  // unhandledRejection from the .finally chain (which would crash the server).
+  promise.finally(() => ytPending.delete(videoId)).catch(() => {});
   return promise;
 }
 
