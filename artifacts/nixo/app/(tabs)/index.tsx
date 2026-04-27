@@ -102,7 +102,8 @@ export default function HomeScreen() {
   const [chip, setChip] = useState<Chip>(CHIPS[0]);
   const [seed, setSeed] = useState<number>(Date.now());
 
-  // YouTube-style: logo + chips slide up together on scroll down, snap back on scroll up
+  // YouTube-style: logo bar slides up and hides, chips bar stays sticky at the top.
+  // Pull up even slightly → logo reappears above the chips.
   const lastY = useRef(0);
   const offsetY = useRef(0);
   const headerTranslate = useRef(new Animated.Value(0)).current;
@@ -113,7 +114,8 @@ export default function HomeScreen() {
       lastY.current = y;
       if (y < 0) return;
       let next = offsetY.current + dy;
-      next = Math.max(0, Math.min(HEADER_HEIGHT, next));
+      // Only translate by LOGO_HEIGHT — chips stay visible, logo hides above viewport
+      next = Math.max(0, Math.min(LOGO_HEIGHT, next));
       offsetY.current = next;
       headerTranslate.setValue(-next);
     },
@@ -123,7 +125,7 @@ export default function HomeScreen() {
   const snapHeader = useCallback(() => {
     const cur = offsetY.current;
     // Snap to closer edge for clean YouTube-like behavior
-    const target = cur > HEADER_HEIGHT / 2 ? HEADER_HEIGHT : 0;
+    const target = cur > LOGO_HEIGHT / 2 ? LOGO_HEIGHT : 0;
     if (target === cur) return;
     offsetY.current = target;
     Animated.timing(headerTranslate, {
