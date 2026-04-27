@@ -1,7 +1,14 @@
 import { Router, type IRouter } from "express";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+
+// Prefer the workspace-bundled latest yt-dlp (kept up to date manually because
+// nixpkgs ships an old release that no longer extracts YouTube formats).
+const LOCAL_YTDLP = resolvePath(process.cwd(), "../../.local/bin/yt-dlp");
+const YTDLP_BIN = existsSync(LOCAL_YTDLP) ? LOCAL_YTDLP : "yt-dlp";
 
 const INSTANCES = [
   "https://pipedapi.kavin.rocks",
@@ -11,14 +18,15 @@ const INSTANCES = [
   "https://pipedapi.wireway.ch",
   "https://piapi.ggtyler.dev",
   "https://pipedapi.drgns.space",
-  "https://pipedapi.tokhmi.xyz",
   "https://pipedapi.smnz.de",
   "https://pipedapi.moomoo.me",
   "https://pipedapi.us.projectsegfau.lt",
   "https://piapi.osphost.fi",
   "https://pipedapi.darkness.services",
-  "https://pipedapi.phoenixthrush.com",
-  "https://pipedapi.coldforge.xyz",
+  "https://pipedapi.ducks.party",
+  "https://pipedapi.reallyaweso.me",
+  "https://pipedapi.leptons.xyz",
+  "https://pipedapi.nosebs.ru",
 ];
 
 const router: IRouter = Router();
@@ -128,11 +136,15 @@ interface YtDlpInfo {
 
 function runYtDlp(videoId: string): Promise<YtDlpInfo> {
   return new Promise((resolve, reject) => {
-    const proc = spawn("yt-dlp", [
+    const proc = spawn(YTDLP_BIN, [
       "-j",
       "--no-warnings",
       "--skip-download",
-      "--no-call-home",
+      // YouTube no longer serves complete formats to the default android client
+      // since 2025. mweb + android_vr + tv_simply still return the full DASH
+      // ladder (144p..4K + multiple audio bitrates) without PO tokens.
+      "--extractor-args",
+      "youtube:player_client=mweb,android_vr,tv_simply",
       "--socket-timeout",
       "12",
       `https://www.youtube.com/watch?v=${videoId}`,
