@@ -102,10 +102,10 @@ export default function HomeScreen() {
   const [chip, setChip] = useState<Chip>(CHIPS[0]);
   const [seed, setSeed] = useState<number>(Date.now());
 
-  // YouTube-style: logo bar collapses on scroll, chips stay sticky
+  // YouTube-style: logo + chips slide up together on scroll down, snap back on scroll up
   const lastY = useRef(0);
   const offsetY = useRef(0);
-  const logoTranslate = useRef(new Animated.Value(0)).current;
+  const headerTranslate = useRef(new Animated.Value(0)).current;
   const onScroll = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
       const y = e.nativeEvent.contentOffset.y;
@@ -113,12 +113,25 @@ export default function HomeScreen() {
       lastY.current = y;
       if (y < 0) return;
       let next = offsetY.current + dy;
-      next = Math.max(0, Math.min(LOGO_HEIGHT, next));
+      next = Math.max(0, Math.min(HEADER_HEIGHT, next));
       offsetY.current = next;
-      logoTranslate.setValue(-next);
+      headerTranslate.setValue(-next);
     },
-    [logoTranslate],
+    [headerTranslate],
   );
+
+  const snapHeader = useCallback(() => {
+    const cur = offsetY.current;
+    // Snap to closer edge for clean YouTube-like behavior
+    const target = cur > HEADER_HEIGHT / 2 ? HEADER_HEIGHT : 0;
+    if (target === cur) return;
+    offsetY.current = target;
+    Animated.timing(headerTranslate, {
+      toValue: -target,
+      duration: 180,
+      useNativeDriver: true,
+    }).start();
+  }, [headerTranslate]);
 
   // Pull videos from top-3 watched channels for "more like this"
   const topChannels = useMemo(() => {
@@ -286,55 +299,15 @@ export default function HomeScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      {/* Sticky chips bar (always visible, like YouTube) */}
-      <View
-        style={[
-          styles.stickyChipsWrap,
-          {
-            top: topPad + LOGO_HEIGHT,
-            backgroundColor: colors.background,
-            borderBottomColor: colors.border,
-          },
-        ]}
-      >
-        <FlatList
-          data={CHIPS}
-          keyExtractor={(c) => c.key}
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.chipsRow}
-          renderItem={({ item }) => {
-            const active = chip.key === item.key;
-            return (
-              <Pressable
-                onPress={() => setChip(item)}
-                style={[
-                  styles.chip,
-                  { backgroundColor: active ? colors.foreground : colors.secondary },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.chipText,
-                    { color: active ? colors.background : colors.foreground },
-                  ]}
-                >
-                  {item.label}
-                </Text>
-              </Pressable>
-            );
-          }}
-        />
-      </View>
-
-      {/* Logo bar (auto-hides on scroll) */}
+      {/* Combined header: logo + chips slide up together (YouTube-style) */}
       <Animated.View
         style={[
-          styles.logoWrap,
+          styles.headerWrap,
           {
             paddingTop: topPad,
             backgroundColor: colors.background,
-            transform: [{ translateY: logoTranslate }],
+            borderBottomColor: colors.border,
+            transform: [{ translateY: headerTranslate }],
           },
         ]}
       >
@@ -348,6 +321,36 @@ export default function HomeScreen() {
             <Feather name="bookmark" size={20} color={colors.foreground} />
           </Pressable>
           <SearchBar />
+        </View>
+        <View style={styles.chipsBar}>
+          <FlatList
+            data={CHIPS}
+            keyExtractor={(c) => c.key}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.chipsRow}
+            renderItem={({ item }) => {
+              const active = chip.key === item.key;
+              return (
+                <Pressable
+                  onPress={() => setChip(item)}
+                  style={[
+                    styles.chip,
+                    { backgroundColor: active ? colors.foreground : colors.secondary },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.chipText,
+                      { color: active ? colors.background : colors.foreground },
+                    ]}
+                  >
+                    {item.label}
+                  </Text>
+                </Pressable>
+              );
+            }}
+          />
         </View>
       </Animated.View>
 
@@ -364,6 +367,8 @@ export default function HomeScreen() {
           }}
           columnWrapperStyle={{ gap: 10 }}
           onScroll={onScroll}
+          onScrollEndDrag={snapHeader}
+          onMomentumScrollEnd={snapHeader}
           scrollEventThrottle={16}
           showsVerticalScrollIndicator={false}
           refreshControl={
@@ -418,6 +423,8 @@ export default function HomeScreen() {
           }}
           showsVerticalScrollIndicator={false}
           onScroll={onScroll}
+          onScrollEndDrag={snapHeader}
+          onMomentumScrollEnd={snapHeader}
           scrollEventThrottle={16}
           onEndReachedThreshold={0.6}
           onEndReached={() => {
@@ -512,19 +519,15 @@ function dedupe(items: PipedSearchItem[] | PipedStreamItem[], watched: Set<strin
 }
 
 const styles = StyleSheet.create({
-  logoWrap: {
+  headerWrap: {
     position: "absolute",
     top: 0,
     left: 0,
     right: 0,
     zIndex: 11,
-  },
-  stickyChipsWrap: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    zIndex: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  chipsBar: {
     height: CHIPS_HEIGHT,
     justifyContent: "center",
   },

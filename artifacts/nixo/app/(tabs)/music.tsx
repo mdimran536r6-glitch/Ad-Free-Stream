@@ -38,6 +38,7 @@ const MOODS = [
 
 const LOGO_HEIGHT = 52;
 const CHIPS_HEIGHT = 48;
+const HEADER_HEIGHT = LOGO_HEIGHT + CHIPS_HEIGHT;
 
 export default function MusicScreen() {
   const colors = useColors();
@@ -47,10 +48,10 @@ export default function MusicScreen() {
   const [mood, setMood] = useState(MOODS[0]);
   const [seed, setSeed] = useState<number>(Date.now());
 
-  // Logo bar auto-hides on scroll, chips bar stays sticky
+  // YT Music-style: logo + chips slide up together on scroll down, snap back on scroll up
   const lastY = useRef(0);
   const offsetY = useRef(0);
-  const logoTranslate = useRef(new Animated.Value(0)).current;
+  const headerTranslate = useRef(new Animated.Value(0)).current;
   const onScroll = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
       const y = e.nativeEvent.contentOffset.y;
@@ -58,12 +59,24 @@ export default function MusicScreen() {
       lastY.current = y;
       if (y < 0) return;
       let next = offsetY.current + dy;
-      next = Math.max(0, Math.min(LOGO_HEIGHT, next));
+      next = Math.max(0, Math.min(HEADER_HEIGHT, next));
       offsetY.current = next;
-      logoTranslate.setValue(-next);
+      headerTranslate.setValue(-next);
     },
-    [logoTranslate],
+    [headerTranslate],
   );
+
+  const snapHeader = useCallback(() => {
+    const cur = offsetY.current;
+    const target = cur > HEADER_HEIGHT / 2 ? HEADER_HEIGHT : 0;
+    if (target === cur) return;
+    offsetY.current = target;
+    Animated.timing(headerTranslate, {
+      toValue: -target,
+      duration: 180,
+      useNativeDriver: true,
+    }).start();
+  }, [headerTranslate]);
 
   const queries = useQueries({
     queries: [
@@ -108,55 +121,15 @@ export default function MusicScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      {/* Sticky chips bar (always visible) */}
-      <View
-        style={[
-          styles.stickyChipsWrap,
-          {
-            top: topPad + LOGO_HEIGHT,
-            backgroundColor: colors.background,
-            borderBottomColor: colors.border,
-          },
-        ]}
-      >
-        <FlatList
-          horizontal
-          data={MOODS}
-          keyExtractor={(m) => m.key}
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.chipsRow}
-          renderItem={({ item: m }) => {
-            const active = mood.key === m.key;
-            return (
-              <Pressable
-                onPress={() => handleMoodPress(m)}
-                style={[
-                  styles.chip,
-                  { backgroundColor: active ? colors.foreground : colors.secondary },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.chipText,
-                    { color: active ? colors.background : colors.foreground },
-                  ]}
-                >
-                  {m.key}
-                </Text>
-              </Pressable>
-            );
-          }}
-        />
-      </View>
-
-      {/* Logo bar — auto-hides on scroll */}
+      {/* Combined header: logo + chips slide up together (YT Music-style) */}
       <Animated.View
         style={[
-          styles.logoWrap,
+          styles.headerWrap,
           {
             paddingTop: topPad,
             backgroundColor: colors.background,
-            transform: [{ translateY: logoTranslate }],
+            borderBottomColor: colors.border,
+            transform: [{ translateY: headerTranslate }],
           },
         ]}
       >
@@ -175,15 +148,47 @@ export default function MusicScreen() {
             <Feather name="search" size={20} color={colors.foreground} />
           </Pressable>
         </View>
+        <View style={styles.chipsBar}>
+          <FlatList
+            horizontal
+            data={MOODS}
+            keyExtractor={(m) => m.key}
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.chipsRow}
+            renderItem={({ item: m }) => {
+              const active = mood.key === m.key;
+              return (
+                <Pressable
+                  onPress={() => handleMoodPress(m)}
+                  style={[
+                    styles.chip,
+                    { backgroundColor: active ? colors.foreground : colors.secondary },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.chipText,
+                      { color: active ? colors.background : colors.foreground },
+                    ]}
+                  >
+                    {m.key}
+                  </Text>
+                </Pressable>
+              );
+            }}
+          />
+        </View>
       </Animated.View>
 
       <Animated.ScrollView
         contentContainerStyle={{
-          paddingTop: topPad + LOGO_HEIGHT + CHIPS_HEIGHT,
+          paddingTop: topPad + HEADER_HEIGHT,
           paddingBottom: 150,
         }}
         showsVerticalScrollIndicator={false}
         onScroll={onScroll}
+        onScrollEndDrag={snapHeader}
+        onMomentumScrollEnd={snapHeader}
         scrollEventThrottle={16}
       >
         {isLoading ? (
@@ -427,19 +432,15 @@ function filterStreams(items?: PipedSearchItem[]): PipedStreamItem[] {
 }
 
 const styles = StyleSheet.create({
-  logoWrap: {
+  headerWrap: {
     position: "absolute",
     top: 0,
     left: 0,
     right: 0,
     zIndex: 11,
-  },
-  stickyChipsWrap: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    zIndex: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  chipsBar: {
     height: CHIPS_HEIGHT,
     justifyContent: "center",
   },
