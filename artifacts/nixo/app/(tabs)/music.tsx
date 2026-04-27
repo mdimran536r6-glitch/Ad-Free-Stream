@@ -180,7 +180,7 @@ export default function MusicScreen() {
       <Animated.ScrollView
         contentContainerStyle={{
           paddingTop: topPad + LOGO_HEIGHT + CHIPS_HEIGHT,
-          paddingBottom: 220,
+          paddingBottom: 150,
         }}
         showsVerticalScrollIndicator={false}
         onScroll={onScroll}
@@ -462,9 +462,9 @@ const styles = StyleSheet.create({
   },
   brand: { fontSize: 20, fontFamily: "Inter_700Bold" },
   iconBtn: { padding: 8 },
-  chipsRow: { paddingHorizontal: 12, gap: 8, alignItems: "center" },
-  chip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8, marginRight: 8 },
-  chipText: { fontSize: 13, fontFamily: "Inter_500Medium" },
+  chipsRow: { paddingHorizontal: 12, alignItems: "center" },
+  chip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, marginRight: 8, minHeight: 34, justifyContent: "center" },
+  chipText: { fontSize: 13, fontFamily: "Inter_600SemiBold", letterSpacing: -0.1 },
 
   hero: {
     margin: 14,
@@ -494,9 +494,9 @@ const styles = StyleSheet.create({
     marginTop: 22,
     marginBottom: 10,
   },
-  quickGrid: { flexDirection: "row", flexWrap: "wrap", paddingHorizontal: 8, gap: 8 },
+  quickGrid: { paddingHorizontal: 12, gap: 8 },
   quickRow: {
-    width: "48%",
+    width: "100%",
     flexDirection: "row",
     alignItems: "center",
     borderRadius: 10,
@@ -504,8 +504,8 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   quickThumb: { width: 56, height: 56 },
-  quickTitle: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
-  quickArtist: { fontSize: 11, fontFamily: "Inter_400Regular" },
+  quickTitle: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  quickArtist: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
   hList: { paddingHorizontal: 12, gap: 12 },
   albumCard: { width: 150, marginRight: 12 },
   albumArt: { width: 150, height: 150, borderRadius: 6, backgroundColor: "#000" },

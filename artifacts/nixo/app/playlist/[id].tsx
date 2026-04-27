@@ -128,7 +128,7 @@ export default function PlaylistScreen() {
           data={data.relatedStreams ?? []}
           keyExtractor={(it, i) => `${it.url}-${i}`}
           ListHeaderComponent={Header}
-          contentContainerStyle={{ paddingBottom: 220 }}
+          contentContainerStyle={{ paddingBottom: 150 }}
           renderItem={({ item, index }) => (
             <Pressable
               onPress={() =>

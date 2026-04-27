@@ -55,6 +55,14 @@ const CHIPS: Chip[] = [
   { key: "podcasts", label: "Podcasts", query: "podcast 2026", filter: "videos" },
   { key: "movies", label: "Movies", query: "movie trailer 2026", filter: "videos" },
   { key: "vlogs", label: "Vlogs", query: "vlog 2026", filter: "videos" },
+  { key: "education", label: "Education", query: "educational videos 2026", filter: "videos" },
+  { key: "cooking", label: "Cooking", query: "cooking recipes 2026", filter: "videos" },
+  { key: "travel", label: "Travel", query: "travel vlog 2026", filter: "videos" },
+  { key: "fashion", label: "Fashion", query: "fashion 2026", filter: "videos" },
+  { key: "fitness", label: "Fitness", query: "fitness workout 2026", filter: "videos" },
+  { key: "anime", label: "Anime", query: "anime 2026", filter: "videos" },
+  { key: "kdrama", label: "K-Drama", query: "k-drama 2026", filter: "videos" },
+  { key: "trailers", label: "Trailers", query: "trailers 2026", filter: "videos" },
 ];
 
 const REGIONS = ["BD", "US", "IN", "GB"] as const;
@@ -351,7 +359,7 @@ export default function HomeScreen() {
           numColumns={2}
           contentContainerStyle={{
             paddingTop: topPad + HEADER_HEIGHT,
-            paddingBottom: 220,
+            paddingBottom: 150,
             paddingHorizontal: 8,
           }}
           columnWrapperStyle={{ gap: 10 }}
@@ -406,7 +414,7 @@ export default function HomeScreen() {
           }
           contentContainerStyle={{
             paddingTop: topPad + HEADER_HEIGHT,
-            paddingBottom: 220,
+            paddingBottom: 150,
           }}
           showsVerticalScrollIndicator={false}
           onScroll={onScroll}
@@ -530,9 +538,9 @@ const styles = StyleSheet.create({
   logoMark: { width: 22, height: 22, borderRadius: 4, alignItems: "center", justifyContent: "center" },
   brand: { fontSize: 18, fontFamily: "Inter_700Bold", letterSpacing: -0.3, marginLeft: 6 },
   iconBtn: { padding: 8 },
-  chipsRow: { paddingHorizontal: 12, gap: 8, alignItems: "center" },
-  chip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8, marginRight: 8 },
-  chipText: { fontSize: 13, fontFamily: "Inter_500Medium" },
+  chipsRow: { paddingHorizontal: 12, alignItems: "center" },
+  chip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, marginRight: 8, minHeight: 34, justifyContent: "center" },
+  chipText: { fontSize: 13, fontFamily: "Inter_600SemiBold", letterSpacing: -0.1 },
   center: { padding: 60, alignItems: "center" },
   footer: { padding: 24, alignItems: "center" },
   empty: { padding: 24, textAlign: "center", fontFamily: "Inter_400Regular" },

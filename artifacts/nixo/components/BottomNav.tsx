@@ -95,14 +95,21 @@ export function BottomNav({ active = null }: Props) {
   );
 }
 
+export const BOTTOM_NAV_HEIGHT = Platform.OS === "ios" ? 78 : 60;
+
 const styles = StyleSheet.create({
   bar: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-around",
     borderTopWidth: StyleSheet.hairlineWidth,
     paddingTop: 6,
     paddingBottom: Platform.OS === "ios" ? 24 : 8,
+    zIndex: 20,
   },
   item: { alignItems: "center", justifyContent: "center", paddingHorizontal: 16, paddingVertical: 4, gap: 3, minWidth: 64 },
   homeIcon: {

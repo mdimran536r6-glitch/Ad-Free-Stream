@@ -131,7 +131,7 @@ export default function FilesScreen() {
           keyExtractor={(d) => `${d.videoId}-${d.format}`}
           renderItem={renderDownload}
           ListEmptyComponent={<Empty colors={colors} text="No downloads yet. Tap ⋮ on a video to download." />}
-          contentContainerStyle={{ paddingBottom: 200 }}
+          contentContainerStyle={{ paddingBottom: 150 }}
         />
       ) : tab === "saved" ? (
         <FlatList
@@ -139,7 +139,7 @@ export default function FilesScreen() {
           keyExtractor={(i) => i.videoId}
           renderItem={renderSaved}
           ListEmptyComponent={<Empty colors={colors} text="Saved videos will appear here." />}
-          contentContainerStyle={{ paddingBottom: 200 }}
+          contentContainerStyle={{ paddingBottom: 150 }}
         />
       ) : (
         <FlatList
@@ -147,7 +147,7 @@ export default function FilesScreen() {
           keyExtractor={(h) => h.videoId}
           renderItem={renderHistory}
           ListEmptyComponent={<Empty colors={colors} text="Watch history will appear here." />}
-          contentContainerStyle={{ paddingBottom: 200 }}
+          contentContainerStyle={{ paddingBottom: 150 }}
         />
       )}
     </View>
