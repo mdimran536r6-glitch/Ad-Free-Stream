@@ -1,9 +1,8 @@
 import { Feather, FontAwesome } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
 import React from "react";
-import { Platform, StyleSheet, View } from "react-native";
+import { Platform, View } from "react-native";
 
-import { MiniPlayer } from "@/components/MiniPlayer";
 import { useColors } from "@/hooks/useColors";
 
 function YtHomeIcon({ color, focused }: { color: string; focused: boolean }) {
@@ -64,18 +63,6 @@ export default function TabLayout() {
           }}
         />
       </Tabs>
-      <View style={styles.miniPlayerWrap} pointerEvents="box-none">
-        <MiniPlayer />
-      </View>
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  miniPlayerWrap: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: Platform.OS === "web" ? 64 : 60,
-  },
-});

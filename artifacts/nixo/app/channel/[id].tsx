@@ -5,6 +5,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Platform,
   Pressable,
@@ -17,21 +18,26 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { BottomNav } from "@/components/BottomNav";
 import { VideoCard } from "@/components/VideoCard";
+import { useLibrary } from "@/contexts/LibraryContext";
 import { usePlayer } from "@/contexts/PlayerContext";
 import { useColors } from "@/hooks/useColors";
+import { downloadMedia } from "@/lib/downloads";
 import {
+  bestAudio,
   extractVideoId,
   pipedChannel,
   pipedSearch,
+  pipedStream,
   type PipedPlaylistItem,
   type PipedSearchItem,
   type PipedStreamItem,
 } from "@/lib/piped";
 
-type Tab = "songs" | "albums" | "videos" | "about";
+type Tab = "songs" | "albums" | "playlists" | "videos" | "about";
 const TABS: { key: Tab; label: string }[] = [
   { key: "songs", label: "Songs" },
   { key: "albums", label: "Albums" },
+  { key: "playlists", label: "Playlists" },
   { key: "videos", label: "Videos" },
   { key: "about", label: "About" },
 ];
@@ -81,8 +87,14 @@ export default function ChannelScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { play } = usePlayer();
+  const { addDownload } = useLibrary();
   const [tab, setTab] = useState<Tab>("songs");
   const [subscribed, setSubscribed] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<{
+    active: boolean;
+    done: number;
+    total: number;
+  }>({ active: false, done: 0, total: 0 });
 
   const channel = useQuery({
     queryKey: ["channel", id],
@@ -102,7 +114,7 @@ export default function ChannelScreen() {
   // This is what makes "- Topic" channels (which have empty relatedStreams)
   // actually show content.
   const enableSearch = !!artistName;
-  const [songsQ, albumsQ, mvQ] = useQueries({
+  const [songsQ, albumsQ, playlistsQ, mvQ] = useQueries({
     queries: [
       {
         queryKey: ["ch-songs", artistName],
@@ -113,6 +125,12 @@ export default function ChannelScreen() {
       {
         queryKey: ["ch-albums", artistName],
         queryFn: () => pipedSearch(artistName, "music_albums"),
+        enabled: enableSearch,
+        staleTime: 1000 * 60 * 10,
+      },
+      {
+        queryKey: ["ch-playlists", artistName],
+        queryFn: () => pipedSearch(artistName, "music_playlists"),
         enabled: enableSearch,
         staleTime: 1000 * 60 * 10,
       },
@@ -135,6 +153,10 @@ export default function ChannelScreen() {
     return items.filter((it) => matchesUploader(it.uploaderName, artistName));
   }, [albumsQ.data, artistName]);
 
+  const playlists = useMemo<PipedPlaylistItem[]>(() => {
+    return (playlistsQ.data?.items ?? []).filter(isPlaylist);
+  }, [playlistsQ.data]);
+
   const videos = useMemo<PipedStreamItem[]>(() => {
     const fromChannel = (data?.relatedStreams ?? []).filter(Boolean);
     if (fromChannel.length > 0) return fromChannel;
@@ -156,6 +178,48 @@ export default function ChannelScreen() {
       artist: it.uploaderName,
       thumbnail: it.thumbnail,
     });
+  };
+
+  const downloadAll = async () => {
+    if (songs.length === 0 || bulkProgress.active) return;
+    const queue = songs.slice(0, 20); // safety cap so we don't blast 100s
+    setBulkProgress({ active: true, done: 0, total: queue.length });
+    let ok = 0;
+    let fail = 0;
+    for (let i = 0; i < queue.length; i++) {
+      const it = queue[i];
+      try {
+        const vid = extractVideoId(it.url);
+        if (!vid) {
+          fail++;
+          continue;
+        }
+        const details = await pipedStream(vid);
+        const audio = bestAudio(details.audioStreams);
+        if (!audio) {
+          fail++;
+          continue;
+        }
+        const res = await downloadMedia(audio.url, it.title, "m4a");
+        await addDownload({
+          videoId: vid,
+          title: it.title,
+          artist: it.uploaderName,
+          thumbnail: it.thumbnail,
+          duration: it.duration ?? 0,
+          format: "m4a",
+          localUri: res.uri,
+          size: res.size,
+        });
+        ok++;
+      } catch {
+        fail++;
+      }
+      setBulkProgress({ active: true, done: i + 1, total: queue.length });
+    }
+    setBulkProgress({ active: false, done: 0, total: 0 });
+    if (Platform.OS === "web") return;
+    Alert.alert("Download complete", `${ok} downloaded${fail ? ` · ${fail} failed` : ""}`);
   };
 
   const Header = (
@@ -320,8 +384,69 @@ export default function ChannelScreen() {
       }
       return (
         <View style={{ paddingHorizontal: 8 }}>
+          <View style={styles.shelfHeader}>
+            <Text style={[styles.shelfTitle, { color: colors.foreground }]}>
+              {Math.min(songs.length, 30)} songs
+            </Text>
+            <Pressable
+              onPress={downloadAll}
+              disabled={bulkProgress.active}
+              style={[
+                styles.dlAllBtn,
+                {
+                  backgroundColor: bulkProgress.active
+                    ? colors.muted
+                    : colors.secondary,
+                },
+              ]}
+            >
+              {bulkProgress.active ? (
+                <>
+                  <ActivityIndicator size="small" color={colors.foreground} />
+                  <Text style={[styles.dlAllText, { color: colors.foreground }]}>
+                    {bulkProgress.done}/{bulkProgress.total}
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <Feather name="download" size={14} color={colors.foreground} />
+                  <Text style={[styles.dlAllText, { color: colors.foreground }]}>
+                    Download all
+                  </Text>
+                </>
+              )}
+            </Pressable>
+          </View>
           {songs.slice(0, 30).map((it, i) => (
             <View key={`${it.url}-${i}`}>{renderSong({ item: it, index: i })}</View>
+          ))}
+        </View>
+      );
+    }
+    if (tab === "playlists") {
+      if (playlistsQ.isLoading) {
+        return (
+          <View style={styles.empty}>
+            <ActivityIndicator color={colors.primary} />
+          </View>
+        );
+      }
+      if (playlists.length === 0) {
+        return (
+          <View style={styles.empty}>
+            <Feather name="list" size={22} color={colors.mutedForeground} />
+            <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+              No playlists found
+            </Text>
+          </View>
+        );
+      }
+      return (
+        <View style={styles.albumGrid}>
+          {playlists.slice(0, 24).map((it) => (
+            <View key={it.url} style={{ width: "50%" }}>
+              {renderAlbum({ item: it })}
+            </View>
           ))}
         </View>
       );
@@ -486,6 +611,24 @@ const styles = StyleSheet.create({
   tabText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   tabUnderline: { height: 2, marginTop: 6, borderRadius: 2, alignSelf: "stretch" },
 
+  shelfHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 4,
+    paddingTop: 12,
+    paddingBottom: 4,
+  },
+  shelfTitle: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  dlAllBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+  },
+  dlAllText: { fontSize: 12, fontFamily: "Inter_700Bold" },
   songRow: { flexDirection: "row", alignItems: "center", paddingVertical: 8, gap: 10, paddingHorizontal: 4 },
   idx: { width: 24, fontSize: 13, fontFamily: "Inter_500Medium", textAlign: "center" },
   songThumb: { width: 48, height: 48, borderRadius: 6, backgroundColor: "#000" },

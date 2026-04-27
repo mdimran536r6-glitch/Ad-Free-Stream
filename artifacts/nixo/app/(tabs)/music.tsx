@@ -1,5 +1,5 @@
 import { Feather } from "@expo/vector-icons";
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQueries, useQuery } from "@tanstack/react-query";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
@@ -25,6 +25,7 @@ import {
   extractChannelId,
   extractVideoId,
   pipedSearch,
+  pipedSearchNextPage,
   type PipedSearchItem,
   type PipedStreamItem,
 } from "@/lib/piped";
@@ -104,6 +105,21 @@ export default function MusicScreen() {
   const lastY = useRef(0);
   const offsetY = useRef(0);
   const headerTranslate = useRef(new Animated.Value(0)).current;
+
+  // Infinite-scroll "More music" feed at the bottom. Uses a representative
+  // music query for the active mood and paginates via Piped's nextpage tokens.
+  const moreQ = mood.q || "trending music this week";
+  const moreInfinite = useInfiniteQuery({
+    queryKey: ["m-more", moreQ],
+    initialPageParam: null as string | null,
+    queryFn: async ({ pageParam }) => {
+      if (pageParam) return pipedSearchNextPage(moreQ, pageParam, "music_songs");
+      return pipedSearch(moreQ, "music_songs");
+    },
+    getNextPageParam: (last) => last?.nextpage ?? null,
+    staleTime: 1000 * 60 * 10,
+  });
+
   const onScroll = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
       const y = e.nativeEvent.contentOffset.y;
@@ -115,8 +131,21 @@ export default function MusicScreen() {
       next = Math.max(0, Math.min(LOGO_HEIGHT, next));
       offsetY.current = next;
       headerTranslate.setValue(-next);
+
+      // Infinite scroll: when within 600px of the bottom, fetch the next
+      // page of "More music".
+      const layoutH = e.nativeEvent.layoutMeasurement.height;
+      const contentH = e.nativeEvent.contentSize.height;
+      if (
+        contentH > 0 &&
+        y + layoutH > contentH - 600 &&
+        moreInfinite.hasNextPage &&
+        !moreInfinite.isFetchingNextPage
+      ) {
+        moreInfinite.fetchNextPage();
+      }
     },
-    [headerTranslate],
+    [headerTranslate, moreInfinite],
   );
 
   const snapHeader = useCallback(() => {
@@ -184,6 +213,16 @@ export default function MusicScreen() {
 
   const [songs, vids, albums, artists, playlists] = queries;
   const [trArtists, trAlbums, trPlaylists] = trendingExtras;
+
+  const moreItems = useMemo<PipedStreamItem[]>(() => {
+    const flat: PipedStreamItem[] = [];
+    for (const page of moreInfinite.data?.pages ?? []) {
+      for (const it of page.items ?? []) {
+        if (it.type === "stream") flat.push(it);
+      }
+    }
+    return dedupeByVideoId(flat);
+  }, [moreInfinite.data]);
 
   // SONGS / VIDEOS shelves
   const songItems = useMemo<PipedStreamItem[]>(() => {
@@ -453,6 +492,66 @@ export default function MusicScreen() {
                 />
               </>
             ) : null}
+
+            {moreItems.length > 0 ? (
+              <>
+                <SectionHeader title="More music" colors={colors} />
+                <View style={{ paddingHorizontal: 8 }}>
+                  {moreItems.map((it) => {
+                    const id = extractVideoId(it.url);
+                    return (
+                      <Pressable
+                        key={`more-${it.url}`}
+                        onPress={() =>
+                          play({
+                            videoId: id,
+                            title: it.title,
+                            artist: it.uploaderName,
+                            thumbnail: it.thumbnail,
+                          })
+                        }
+                        style={styles.moreRow}
+                      >
+                        <Image
+                          source={{ uri: it.thumbnail }}
+                          style={styles.moreThumb}
+                          contentFit="cover"
+                        />
+                        <View style={{ flex: 1 }}>
+                          <Text
+                            numberOfLines={1}
+                            style={[styles.quickTitle, { color: colors.foreground }]}
+                          >
+                            {it.title}
+                          </Text>
+                          <Text
+                            numberOfLines={1}
+                            style={[styles.quickArtist, { color: colors.mutedForeground }]}
+                          >
+                            {it.uploaderName}
+                          </Text>
+                        </View>
+                        <Feather name="play" size={18} color={colors.mutedForeground} />
+                      </Pressable>
+                    );
+                  })}
+                </View>
+                {moreInfinite.isFetchingNextPage ? (
+                  <View style={{ paddingVertical: 16, alignItems: "center" }}>
+                    <ActivityIndicator color={colors.primary} />
+                  </View>
+                ) : moreInfinite.hasNextPage ? (
+                  <Pressable
+                    onPress={() => moreInfinite.fetchNextPage()}
+                    style={{ paddingVertical: 14, alignItems: "center" }}
+                  >
+                    <Text style={[styles.quickArtist, { color: colors.primary }]}>
+                      Load more
+                    </Text>
+                  </Pressable>
+                ) : null}
+              </>
+            ) : null}
           </>
         )}
       </Animated.ScrollView>
@@ -632,6 +731,15 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   quickThumb: { width: 56, height: 56 },
+
+  moreRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+  },
+  moreThumb: { width: 56, height: 56, borderRadius: 6, backgroundColor: "#000" },
   quickTitle: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   quickArtist: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
   hList: { paddingHorizontal: 12, gap: 12 },

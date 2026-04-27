@@ -158,7 +158,18 @@ export default function VideoScreen() {
 
           <View style={[styles.channelRow, { borderColor: colors.border }]}>
             <Pressable
-              onPress={() => router.push(`/channel/${channelId}`)}
+              onPress={() => {
+                if (!channelId) return;
+                router.push({
+                  pathname: "/channel/[id]",
+                  params: {
+                    id: channelId,
+                    name: data.uploader ?? "",
+                    subs: String(data.uploaderSubscriberCount ?? ""),
+                    avatar: data.uploaderAvatar ?? "",
+                  },
+                });
+              }}
               style={styles.channelLeft}
             >
               <Image source={{ uri: data.uploaderAvatar }} style={styles.avatar} contentFit="cover" />
@@ -167,9 +178,13 @@ export default function VideoScreen() {
                   {data.uploader}
                 </Text>
                 <Text style={[styles.channelSub, { color: colors.mutedForeground }]} numberOfLines={1}>
-                  {data.uploaderSubscriberCount >= 1000
-                    ? `${(data.uploaderSubscriberCount / 1000).toFixed(0)}K subscribers`
-                    : `${data.uploaderSubscriberCount} subscribers`}
+                  {data.uploaderSubscriberCount > 0
+                    ? data.uploaderSubscriberCount >= 1_000_000
+                      ? `${(data.uploaderSubscriberCount / 1_000_000).toFixed(1)}M subscribers`
+                      : data.uploaderSubscriberCount >= 1_000
+                      ? `${(data.uploaderSubscriberCount / 1_000).toFixed(1)}K subscribers`
+                      : `${data.uploaderSubscriberCount} subscribers`
+                    : ""}
                 </Text>
               </View>
             </Pressable>
