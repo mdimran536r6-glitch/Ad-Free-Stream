@@ -633,6 +633,7 @@ export default function MusicScreen() {
                               name: item.name,
                               subs: String(item.subscribers ?? ""),
                               avatar: item.thumbnail ?? "",
+                              mode: "music",
                             },
                           });
                         }}

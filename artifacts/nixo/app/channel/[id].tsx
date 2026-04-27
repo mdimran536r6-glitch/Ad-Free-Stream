@@ -26,21 +26,49 @@ import {
   bestAudio,
   extractVideoId,
   pipedChannel,
+  pipedChannelTab,
   pipedSearch,
   pipedStream,
+  type PipedChannelTab,
   type PipedPlaylistItem,
   type PipedSearchItem,
   type PipedStreamItem,
 } from "@/lib/piped";
 
-type Tab = "songs" | "albums" | "playlists" | "videos" | "about";
-const TABS: { key: Tab; label: string }[] = [
+type ChannelMode = "video" | "music";
+
+// Tabs for music artists (YT Music style)
+type MusicTab = "songs" | "albums" | "playlists" | "videos" | "about";
+const MUSIC_TABS: { key: MusicTab; label: string }[] = [
   { key: "songs", label: "Songs" },
   { key: "albums", label: "Albums" },
   { key: "playlists", label: "Playlists" },
   { key: "videos", label: "Videos" },
   { key: "about", label: "About" },
 ];
+
+// Tabs for regular video channels (YouTube style)
+type VideoTab =
+  | "videos"
+  | "shorts"
+  | "live"
+  | "playlists"
+  | "podcasts"
+  | "releases"
+  | "courses"
+  | "about";
+
+// Map Piped tab name → label / key. Videos uses `relatedStreams` from the
+// channel root (Piped doesn't expose a separate "videos" tab for most channels).
+const VIDEO_TAB_LABELS: Record<string, { key: VideoTab; label: string; order: number }> = {
+  shorts: { key: "shorts", label: "Shorts", order: 2 },
+  livestreams: { key: "live", label: "Live", order: 3 },
+  playlists: { key: "playlists", label: "Playlists", order: 4 },
+  podcasts: { key: "podcasts", label: "Podcasts", order: 5 },
+  releases: { key: "releases", label: "Releases", order: 6 },
+  albums: { key: "releases", label: "Releases", order: 6 },
+  courses: { key: "courses", label: "Courses", order: 7 },
+};
 
 function formatSubs(n?: number | null): string {
   if (n == null || n < 0) return "";
@@ -77,18 +105,19 @@ export default function ChannelScreen() {
     name?: string;
     subs?: string;
     avatar?: string;
+    mode?: ChannelMode;
   }>();
   const id = params.id;
   const fallbackName = params.name ?? "";
   const fallbackSubs = params.subs ? Number(params.subs) : undefined;
   const fallbackAvatar = params.avatar ?? "";
+  const mode: ChannelMode = params.mode === "music" ? "music" : "video";
 
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { play } = usePlayer();
   const { addDownload } = useLibrary();
-  const [tab, setTab] = useState<Tab>("songs");
   const [subscribed, setSubscribed] = useState(false);
   const [bulkProgress, setBulkProgress] = useState<{
     active: boolean;
@@ -110,34 +139,32 @@ export default function ChannelScreen() {
   const subs =
     typeof subsRaw === "number" && subsRaw >= 0 ? subsRaw : fallbackSubs ?? -1;
 
-  // Fan-out search by artist name to populate Songs/Albums/Videos shelves.
-  // This is what makes "- Topic" channels (which have empty relatedStreams)
-  // actually show content.
-  const enableSearch = !!artistName;
+  // ---- MUSIC mode: artist shelves via search ----
+  const enableMusic = mode === "music" && !!artistName;
   const [songsQ, albumsQ, playlistsQ, mvQ] = useQueries({
     queries: [
       {
         queryKey: ["ch-songs", artistName],
         queryFn: () => pipedSearch(artistName, "music_songs"),
-        enabled: enableSearch,
+        enabled: enableMusic,
         staleTime: 1000 * 60 * 10,
       },
       {
         queryKey: ["ch-albums", artistName],
         queryFn: () => pipedSearch(artistName, "music_albums"),
-        enabled: enableSearch,
+        enabled: enableMusic,
         staleTime: 1000 * 60 * 10,
       },
       {
         queryKey: ["ch-playlists", artistName],
         queryFn: () => pipedSearch(artistName, "music_playlists"),
-        enabled: enableSearch,
+        enabled: enableMusic,
         staleTime: 1000 * 60 * 10,
       },
       {
         queryKey: ["ch-mv", artistName],
         queryFn: () => pipedSearch(artistName, "music_videos"),
-        enabled: enableSearch,
+        enabled: enableMusic,
         staleTime: 1000 * 60 * 10,
       },
     ],
@@ -153,17 +180,71 @@ export default function ChannelScreen() {
     return items.filter((it) => matchesUploader(it.uploaderName, artistName));
   }, [albumsQ.data, artistName]);
 
-  const playlists = useMemo<PipedPlaylistItem[]>(() => {
+  const playlistsMusic = useMemo<PipedPlaylistItem[]>(() => {
     return (playlistsQ.data?.items ?? []).filter(isPlaylist);
   }, [playlistsQ.data]);
 
-  const videos = useMemo<PipedStreamItem[]>(() => {
-    const fromChannel = (data?.relatedStreams ?? []).filter(Boolean);
-    if (fromChannel.length > 0) return fromChannel;
-    // Fallback: music videos search filtered by uploader.
-    const items = (mvQ.data?.items ?? []).filter(isStream);
-    return items.filter((it) => matchesUploader(it.uploaderName, artistName));
-  }, [data?.relatedStreams, mvQ.data, artistName]);
+  // ---- VIDEO mode: dynamic tabs from Piped channel.tabs ----
+  const channelTabs = data?.tabs ?? [];
+  const availableVideoTabs = useMemo(() => {
+    const out: { key: VideoTab; label: string; order: number; data?: string }[] = [
+      { key: "videos", label: "Videos", order: 1 },
+    ];
+    const seen = new Set<VideoTab>(["videos"]);
+    for (const t of channelTabs) {
+      const meta = VIDEO_TAB_LABELS[t.name?.toLowerCase()];
+      if (meta && !seen.has(meta.key)) {
+        out.push({ ...meta, data: t.data });
+        seen.add(meta.key);
+      }
+    }
+    out.push({ key: "about", label: "About", order: 99 });
+    return out.sort((a, b) => a.order - b.order);
+  }, [channelTabs]);
+
+  const [musicTab, setMusicTab] = useState<MusicTab>("songs");
+  const [videoTab, setVideoTab] = useState<VideoTab>("videos");
+
+  // Lazy-load each video-mode tab's content from Piped's /channels/tabs?data=...
+  const findTabData = (key: VideoTab): string | undefined =>
+    availableVideoTabs.find((t) => t.key === key)?.data;
+
+  const shortsTabQ = useQuery({
+    queryKey: ["ch-tab", id, "shorts", findTabData("shorts") ?? ""],
+    queryFn: () => pipedChannelTab(findTabData("shorts")!),
+    enabled: mode === "video" && !!findTabData("shorts") && videoTab === "shorts",
+    staleTime: 1000 * 60 * 10,
+  });
+  const liveTabQ = useQuery({
+    queryKey: ["ch-tab", id, "live", findTabData("live") ?? ""],
+    queryFn: () => pipedChannelTab(findTabData("live")!),
+    enabled: mode === "video" && !!findTabData("live") && videoTab === "live",
+    staleTime: 1000 * 60 * 10,
+  });
+  const playlistsTabQ = useQuery({
+    queryKey: ["ch-tab", id, "playlists", findTabData("playlists") ?? ""],
+    queryFn: () => pipedChannelTab(findTabData("playlists")!),
+    enabled: mode === "video" && !!findTabData("playlists") && videoTab === "playlists",
+    staleTime: 1000 * 60 * 10,
+  });
+  const podcastsTabQ = useQuery({
+    queryKey: ["ch-tab", id, "podcasts", findTabData("podcasts") ?? ""],
+    queryFn: () => pipedChannelTab(findTabData("podcasts")!),
+    enabled: mode === "video" && !!findTabData("podcasts") && videoTab === "podcasts",
+    staleTime: 1000 * 60 * 10,
+  });
+  const releasesTabQ = useQuery({
+    queryKey: ["ch-tab", id, "releases", findTabData("releases") ?? ""],
+    queryFn: () => pipedChannelTab(findTabData("releases")!),
+    enabled: mode === "video" && !!findTabData("releases") && videoTab === "releases",
+    staleTime: 1000 * 60 * 10,
+  });
+  const coursesTabQ = useQuery({
+    queryKey: ["ch-tab", id, "courses", findTabData("courses") ?? ""],
+    queryFn: () => pipedChannelTab(findTabData("courses")!),
+    enabled: mode === "video" && !!findTabData("courses") && videoTab === "courses",
+    staleTime: 1000 * 60 * 10,
+  });
 
   if (!id) return null;
   const webTop = Platform.OS === "web" ? 67 : 0;
@@ -182,7 +263,7 @@ export default function ChannelScreen() {
 
   const downloadAll = async () => {
     if (songs.length === 0 || bulkProgress.active) return;
-    const queue = songs.slice(0, 20); // safety cap so we don't blast 100s
+    const queue = songs.slice(0, 20);
     setBulkProgress({ active: true, done: 0, total: queue.length });
     let ok = 0;
     let fail = 0;
@@ -222,6 +303,11 @@ export default function ChannelScreen() {
     Alert.alert("Download complete", `${ok} downloaded${fail ? ` · ${fail} failed` : ""}`);
   };
 
+  const tabsList: { key: string; label: string }[] =
+    mode === "music"
+      ? MUSIC_TABS
+      : availableVideoTabs.map((t) => ({ key: t.key, label: t.label }));
+
   const Header = (
     <View>
       {data?.bannerUrl ? (
@@ -247,7 +333,7 @@ export default function ChannelScreen() {
             </Text>
           ) : (
             <Text style={[styles.sub, { color: colors.mutedForeground }]}>
-              Artist
+              {mode === "music" ? "Artist" : "Channel"}
             </Text>
           )}
         </View>
@@ -272,7 +358,7 @@ export default function ChannelScreen() {
             {subscribed ? "SUBSCRIBED" : "SUBSCRIBE"}
           </Text>
         </Pressable>
-        {songs.length > 0 ? (
+        {mode === "music" && songs.length > 0 ? (
           <Pressable
             onPress={() => playSong(songs[0])}
             style={[styles.playBtn, { backgroundColor: colors.primary }]}
@@ -289,10 +375,17 @@ export default function ChannelScreen() {
         style={styles.tabsRow}
         contentContainerStyle={{ paddingHorizontal: 8 }}
       >
-        {TABS.map((t) => {
-          const active = tab === t.key;
+        {tabsList.map((t) => {
+          const active = mode === "music" ? musicTab === t.key : videoTab === t.key;
           return (
-            <Pressable key={t.key} onPress={() => setTab(t.key)} style={styles.tabBtn}>
+            <Pressable
+              key={t.key}
+              onPress={() => {
+                if (mode === "music") setMusicTab(t.key as MusicTab);
+                else setVideoTab(t.key as VideoTab);
+              }}
+              style={styles.tabBtn}
+            >
               <Text
                 style={[
                   styles.tabText,
@@ -311,11 +404,7 @@ export default function ChannelScreen() {
     </View>
   );
 
-  const songsLoading = songsQ.isLoading;
-  const albumsLoading = albumsQ.isLoading;
-  const videosLoading = channel.isLoading || mvQ.isLoading;
-
-  const renderSong = ({ item, index }: { item: PipedStreamItem; index: number }) => (
+  const renderSongRow = ({ item, index }: { item: PipedStreamItem; index: number }) => (
     <Pressable onPress={() => playSong(item)} style={styles.songRow}>
       <Text style={[styles.idx, { color: colors.mutedForeground }]}>{index + 1}</Text>
       <Image source={{ uri: item.thumbnail }} style={styles.songThumb} contentFit="cover" />
@@ -330,7 +419,7 @@ export default function ChannelScreen() {
     </Pressable>
   );
 
-  const renderAlbum = ({ item }: { item: PipedPlaylistItem }) => {
+  const renderAlbumCard = ({ item }: { item: PipedPlaylistItem }) => {
     const pid = item.url.replace(/^\/playlist\?list=/, "").replace(/^\//, "");
     return (
       <Pressable
@@ -343,15 +432,134 @@ export default function ChannelScreen() {
         </Text>
         {item.uploaderName ? (
           <Text numberOfLines={1} style={[styles.albumArtist, { color: colors.mutedForeground }]}>
-            Album · {item.uploaderName}
+            {item.uploaderName}
           </Text>
-        ) : null}
+        ) : (
+          <Text numberOfLines={1} style={[styles.albumArtist, { color: colors.mutedForeground }]}>
+            Playlist · {item.videos > 0 ? `${item.videos} videos` : ""}
+          </Text>
+        )}
       </Pressable>
     );
   };
 
-  const TabBody = () => {
-    if (tab === "about") {
+  const Empty = ({ icon, label }: { icon: keyof typeof Feather.glyphMap; label: string }) => (
+    <View style={styles.empty}>
+      <Feather name={icon} size={22} color={colors.mutedForeground} />
+      <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>{label}</Text>
+    </View>
+  );
+
+  const Loading = () => (
+    <View style={styles.empty}>
+      <ActivityIndicator color={colors.primary} />
+    </View>
+  );
+
+  const renderTabContent = () => {
+    // ============== MUSIC MODE ==============
+    if (mode === "music") {
+      if (musicTab === "about") {
+        return (
+          <View style={styles.aboutBox}>
+            {data?.description ? (
+              <Text style={[styles.desc, { color: colors.foreground }]}>{data.description}</Text>
+            ) : (
+              <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+                No description available.
+              </Text>
+            )}
+          </View>
+        );
+      }
+      if (musicTab === "songs") {
+        if (songsQ.isLoading) return <Loading />;
+        if (songs.length === 0) return <Empty icon="music" label="No songs found" />;
+        return (
+          <View style={{ paddingHorizontal: 8 }}>
+            <View style={styles.shelfHeader}>
+              <Text style={[styles.shelfTitle, { color: colors.foreground }]}>
+                {Math.min(songs.length, 30)} songs
+              </Text>
+              <Pressable
+                onPress={downloadAll}
+                disabled={bulkProgress.active}
+                style={[
+                  styles.dlAllBtn,
+                  {
+                    backgroundColor: bulkProgress.active ? colors.muted : colors.secondary,
+                  },
+                ]}
+              >
+                {bulkProgress.active ? (
+                  <>
+                    <ActivityIndicator size="small" color={colors.foreground} />
+                    <Text style={[styles.dlAllText, { color: colors.foreground }]}>
+                      {bulkProgress.done}/{bulkProgress.total}
+                    </Text>
+                  </>
+                ) : (
+                  <>
+                    <Feather name="download" size={14} color={colors.foreground} />
+                    <Text style={[styles.dlAllText, { color: colors.foreground }]}>
+                      Download all
+                    </Text>
+                  </>
+                )}
+              </Pressable>
+            </View>
+            {songs.slice(0, 30).map((it, i) => (
+              <View key={`${it.url}-${i}`}>{renderSongRow({ item: it, index: i })}</View>
+            ))}
+          </View>
+        );
+      }
+      if (musicTab === "playlists") {
+        if (playlistsQ.isLoading) return <Loading />;
+        if (playlistsMusic.length === 0) return <Empty icon="list" label="No playlists found" />;
+        return (
+          <View style={styles.albumGrid}>
+            {playlistsMusic.slice(0, 24).map((it) => (
+              <View key={it.url} style={{ width: "50%" }}>
+                {renderAlbumCard({ item: it })}
+              </View>
+            ))}
+          </View>
+        );
+      }
+      if (musicTab === "albums") {
+        if (albumsQ.isLoading) return <Loading />;
+        if (albums.length === 0) return <Empty icon="disc" label="No albums found" />;
+        return (
+          <View style={styles.albumGrid}>
+            {albums.slice(0, 24).map((it) => (
+              <View key={it.url} style={{ width: "50%" }}>
+                {renderAlbumCard({ item: it })}
+              </View>
+            ))}
+          </View>
+        );
+      }
+      // music videos
+      const videosArr = (() => {
+        const fromChannel = (data?.relatedStreams ?? []).filter(Boolean);
+        if (fromChannel.length > 0) return fromChannel;
+        const items = (mvQ.data?.items ?? []).filter(isStream);
+        return items.filter((it) => matchesUploader(it.uploaderName, artistName));
+      })();
+      if (channel.isLoading || mvQ.isLoading) return <Loading />;
+      if (videosArr.length === 0) return <Empty icon="video-off" label="No videos available" />;
+      return (
+        <View>
+          {videosArr.slice(0, 30).map((it, i) => (
+            <VideoCard key={`${it.url}-${i}`} item={it} variant="feed" />
+          ))}
+        </View>
+      );
+    }
+
+    // ============== VIDEO MODE ==============
+    if (videoTab === "about") {
       return (
         <View style={styles.aboutBox}>
           {data?.description ? (
@@ -361,149 +569,94 @@ export default function ChannelScreen() {
               No description available.
             </Text>
           )}
+          {formatSubs(subs) ? (
+            <Text style={[styles.aboutMeta, { color: colors.mutedForeground }]}>
+              {formatSubs(subs)}
+            </Text>
+          ) : null}
         </View>
       );
     }
-    if (tab === "songs") {
-      if (songsLoading) {
-        return (
-          <View style={styles.empty}>
-            <ActivityIndicator color={colors.primary} />
-          </View>
-        );
-      }
-      if (songs.length === 0) {
-        return (
-          <View style={styles.empty}>
-            <Feather name="music" size={22} color={colors.mutedForeground} />
-            <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-              No songs found
-            </Text>
-          </View>
-        );
-      }
+    if (videoTab === "videos") {
+      // Videos: recent uploads (relatedStreams from /channel/:id)
+      if (channel.isLoading) return <Loading />;
+      const items = data?.relatedStreams ?? [];
+      if (items.length === 0)
+        return <Empty icon="video-off" label="No videos available" />;
       return (
-        <View style={{ paddingHorizontal: 8 }}>
-          <View style={styles.shelfHeader}>
-            <Text style={[styles.shelfTitle, { color: colors.foreground }]}>
-              {Math.min(songs.length, 30)} songs
-            </Text>
-            <Pressable
-              onPress={downloadAll}
-              disabled={bulkProgress.active}
-              style={[
-                styles.dlAllBtn,
-                {
-                  backgroundColor: bulkProgress.active
-                    ? colors.muted
-                    : colors.secondary,
-                },
-              ]}
-            >
-              {bulkProgress.active ? (
-                <>
-                  <ActivityIndicator size="small" color={colors.foreground} />
-                  <Text style={[styles.dlAllText, { color: colors.foreground }]}>
-                    {bulkProgress.done}/{bulkProgress.total}
-                  </Text>
-                </>
-              ) : (
-                <>
-                  <Feather name="download" size={14} color={colors.foreground} />
-                  <Text style={[styles.dlAllText, { color: colors.foreground }]}>
-                    Download all
-                  </Text>
-                </>
-              )}
-            </Pressable>
-          </View>
-          {songs.slice(0, 30).map((it, i) => (
-            <View key={`${it.url}-${i}`}>{renderSong({ item: it, index: i })}</View>
+        <View>
+          {items.slice(0, 30).map((it, i) => (
+            <VideoCard key={`${it.url}-${i}`} item={it} variant="feed" />
           ))}
         </View>
       );
     }
-    if (tab === "playlists") {
-      if (playlistsQ.isLoading) {
+    if (videoTab === "shorts" || videoTab === "live") {
+      const q = videoTab === "shorts" ? shortsTabQ : liveTabQ;
+      if (q.isLoading) return <Loading />;
+      const items = (q.data?.content ?? []).filter(isStream);
+      if (items.length === 0)
         return (
-          <View style={styles.empty}>
-            <ActivityIndicator color={colors.primary} />
-          </View>
+          <Empty
+            icon={videoTab === "shorts" ? "zap" : "radio"}
+            label={videoTab === "shorts" ? "No shorts available" : "No streams available"}
+          />
         );
-      }
-      if (playlists.length === 0) {
+      return (
+        <View>
+          {items.slice(0, 50).map((it, i) => (
+            <VideoCard key={`${it.url}-${i}`} item={it} variant="feed" />
+          ))}
+        </View>
+      );
+    }
+    if (videoTab === "playlists" || videoTab === "podcasts" || videoTab === "releases") {
+      const q =
+        videoTab === "playlists"
+          ? playlistsTabQ
+          : videoTab === "podcasts"
+          ? podcastsTabQ
+          : releasesTabQ;
+      if (q.isLoading) return <Loading />;
+      const items = (q.data?.content ?? []).filter(isPlaylist);
+      if (items.length === 0)
         return (
-          <View style={styles.empty}>
-            <Feather name="list" size={22} color={colors.mutedForeground} />
-            <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-              No playlists found
-            </Text>
-          </View>
+          <Empty
+            icon="list"
+            label={
+              videoTab === "playlists"
+                ? "No playlists yet"
+                : videoTab === "podcasts"
+                ? "No podcasts yet"
+                : "No releases yet"
+            }
+          />
         );
-      }
       return (
         <View style={styles.albumGrid}>
-          {playlists.slice(0, 24).map((it) => (
+          {items.slice(0, 30).map((it) => (
             <View key={it.url} style={{ width: "50%" }}>
-              {renderAlbum({ item: it })}
+              {renderAlbumCard({ item: it })}
             </View>
           ))}
         </View>
       );
     }
-    if (tab === "albums") {
-      if (albumsLoading) {
-        return (
-          <View style={styles.empty}>
-            <ActivityIndicator color={colors.primary} />
-          </View>
-        );
-      }
-      if (albums.length === 0) {
-        return (
-          <View style={styles.empty}>
-            <Feather name="disc" size={22} color={colors.mutedForeground} />
-            <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-              No albums found
-            </Text>
-          </View>
-        );
-      }
+    if (videoTab === "courses") {
+      if (coursesTabQ.isLoading) return <Loading />;
+      const items = (coursesTabQ.data?.content ?? []).filter(isPlaylist);
+      if (items.length === 0) return <Empty icon="book-open" label="No courses available" />;
       return (
         <View style={styles.albumGrid}>
-          {albums.slice(0, 24).map((it) => (
+          {items.slice(0, 30).map((it) => (
             <View key={it.url} style={{ width: "50%" }}>
-              {renderAlbum({ item: it })}
+              {renderAlbumCard({ item: it })}
             </View>
           ))}
         </View>
       );
     }
-    // tab === "videos"
-    if (videosLoading) {
-      return (
-        <View style={styles.empty}>
-          <ActivityIndicator color={colors.primary} />
-        </View>
-      );
-    }
-    if (videos.length === 0) {
-      return (
-        <View style={styles.empty}>
-          <Feather name="video-off" size={22} color={colors.mutedForeground} />
-          <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-            No videos available
-          </Text>
-        </View>
-      );
-    }
-    return (
-      <View>
-        {videos.slice(0, 30).map((it, i) => (
-          <VideoCard key={`${it.url}-${i}`} item={it} variant="feed" />
-        ))}
-      </View>
-    );
+    return null;
   };
 
   return (
@@ -547,7 +700,7 @@ export default function ChannelScreen() {
         <FlatList
           data={[0]}
           keyExtractor={() => "ch"}
-          renderItem={() => <TabBody />}
+          renderItem={() => <View>{renderTabContent()}</View>}
           ListHeaderComponent={Header}
           contentContainerStyle={{ paddingBottom: 140 }}
           showsVerticalScrollIndicator={false}
@@ -557,6 +710,10 @@ export default function ChannelScreen() {
     </View>
   );
 }
+
+// Suppress unused-symbol warning while keeping the type exported via lib.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+type _Unused = PipedChannelTab;
 
 const styles = StyleSheet.create({
   headerRow: {
@@ -601,6 +758,7 @@ const styles = StyleSheet.create({
   },
   playBtnText: { color: "#fff", fontSize: 13, fontFamily: "Inter_700Bold" },
   desc: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 20 },
+  aboutMeta: { fontSize: 12, fontFamily: "Inter_500Medium", marginTop: 12 },
   aboutBox: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 20 },
   tabsRow: {
     marginTop: 16,

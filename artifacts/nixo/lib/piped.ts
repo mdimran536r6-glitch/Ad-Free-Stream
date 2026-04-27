@@ -135,6 +135,13 @@ export interface VideoStream {
   videoOnly: boolean;
 }
 
+export interface PipedChannelTab {
+  /** Human label, e.g. "videos", "playlists", "shorts", "livestreams", "releases", "podcasts", "channels", "albums" */
+  name: string;
+  /** Opaque token to pass to /channels/tabs?data=... */
+  data: string;
+}
+
 export interface PipedChannel {
   id: string;
   name: string;
@@ -144,6 +151,13 @@ export interface PipedChannel {
   subscriberCount: number;
   verified: boolean;
   relatedStreams: PipedStreamItem[];
+  tabs?: PipedChannelTab[];
+  nextpage?: string | null;
+}
+
+export interface PipedChannelTabContent {
+  content: PipedSearchItem[];
+  nextpage?: string | null;
 }
 
 export function extractVideoId(url: string): string {
@@ -213,6 +227,10 @@ export async function pipedStream(videoId: string): Promise<PipedStreamDetails> 
 
 export function pipedChannel(channelId: string) {
   return pipedFetch<PipedChannel>(`/channel/${channelId}`);
+}
+
+export function pipedChannelTab(data: string) {
+  return pipedFetch<PipedChannelTabContent>(`/channels/tabs?data=${encodeURIComponent(data)}`);
 }
 
 export interface PipedPlaylistDetails {

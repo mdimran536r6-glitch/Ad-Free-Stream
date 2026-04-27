@@ -24,12 +24,15 @@ import { usePlayer } from "@/contexts/PlayerContext";
 import { useColors } from "@/hooks/useColors";
 import {
   extractChannelId,
+  extractVideoId,
   formatDuration,
   formatViews,
   mediaProxy,
   pickVideoStream,
+  pipedSearch,
   pipedStream,
   timeAgo,
+  type PipedStreamItem,
 } from "@/lib/piped";
 
 export default function VideoScreen() {
@@ -48,6 +51,28 @@ export default function VideoScreen() {
     enabled: !!id,
     staleTime: 1000 * 60 * 10,
   });
+
+  // Fallback "Up next": when Piped doesn't return relatedStreams, search by title
+  // so the section never sits empty.
+  const fallbackUpNext = useQuery({
+    queryKey: ["video-fallback-related", id, stream.data?.title ?? ""],
+    queryFn: async () => {
+      const t = stream.data?.title;
+      if (!t) return [] as PipedStreamItem[];
+      const r = await pipedSearch(t.slice(0, 80), "videos");
+      return (r.items ?? []).filter(
+        (i): i is PipedStreamItem => i.type === "stream" && extractVideoId(i.url) !== id,
+      );
+    },
+    enabled: !!stream.data && (stream.data.relatedStreams ?? []).length === 0,
+    staleTime: 1000 * 60 * 10,
+  });
+
+  const upNext = useMemo<PipedStreamItem[]>(() => {
+    const fromStream = stream.data?.relatedStreams ?? [];
+    if (fromStream.length > 0) return fromStream;
+    return fallbackUpNext.data ?? [];
+  }, [stream.data, fallbackUpNext.data]);
 
   const sourceUri = useMemo(() => {
     if (!stream.data) return null;
@@ -167,6 +192,7 @@ export default function VideoScreen() {
                     name: data.uploader ?? "",
                     subs: String(data.uploaderSubscriberCount ?? ""),
                     avatar: data.uploaderAvatar ?? "",
+                    mode: "video",
                   },
                 });
               }}
@@ -210,9 +236,19 @@ export default function VideoScreen() {
 
           <View style={styles.section}>
             <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Up next</Text>
-            {(data.relatedStreams ?? []).slice(0, 20).map((it) => (
-              <VideoCard key={it.url} item={it} variant="feed" />
-            ))}
+            {upNext.length === 0 && fallbackUpNext.isLoading ? (
+              <View style={[styles.center, { paddingVertical: 24 }]}>
+                <ActivityIndicator color={colors.primary} />
+              </View>
+            ) : upNext.length === 0 ? (
+              <Text style={[styles.subMeta, { color: colors.mutedForeground, paddingHorizontal: 12 }]}>
+                No suggestions available.
+              </Text>
+            ) : (
+              upNext.slice(0, 20).map((it) => (
+                <VideoCard key={it.url} item={it} variant="feed" />
+              ))
+            )}
           </View>
         </ScrollView>
       )}
