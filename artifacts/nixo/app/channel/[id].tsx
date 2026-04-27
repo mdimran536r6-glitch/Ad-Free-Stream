@@ -40,6 +40,15 @@ export default function ChannelScreen() {
   const webTop = Platform.OS === "web" ? 67 : 0;
   const topPad = insets.top + webTop;
 
+  const formatSubs = (n?: number | null): string => {
+    if (n == null || n < 0) return "";
+    if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B subscribers`;
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M subscribers`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K subscribers`;
+    if (n === 0) return "";
+    return `${n} subscribers`;
+  };
+
   const Header = (
     <View>
       {data?.bannerUrl ? (
@@ -55,11 +64,11 @@ export default function ChannelScreen() {
             {data?.name}
             {data?.verified ? "  ✓" : ""}
           </Text>
-          <Text style={[styles.sub, { color: colors.mutedForeground }]}>
-            {(data?.subscriberCount ?? 0) >= 1000
-              ? `${((data?.subscriberCount ?? 0) / 1000).toFixed(0)}K subscribers`
-              : `${data?.subscriberCount ?? 0} subscribers`}
-          </Text>
+          {formatSubs(data?.subscriberCount) ? (
+            <Text style={[styles.sub, { color: colors.mutedForeground }]}>
+              {formatSubs(data?.subscriberCount)}
+            </Text>
+          ) : null}
         </View>
       </View>
 
@@ -129,9 +138,25 @@ export default function ChannelScreen() {
         </Text>
       </View>
 
-      {channel.isLoading || !data ? (
+      {channel.isLoading ? (
         <View style={styles.center}>
           <ActivityIndicator color={colors.primary} />
+        </View>
+      ) : channel.isError || !data ? (
+        <View style={styles.center}>
+          <Feather name="alert-circle" size={28} color={colors.mutedForeground} />
+          <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
+            Could not load channel
+          </Text>
+          <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+            The artist or channel could not be reached. Please try again.
+          </Text>
+          <Pressable
+            onPress={() => channel.refetch()}
+            style={[styles.retryBtn, { backgroundColor: colors.foreground }]}
+          >
+            <Text style={[styles.retryText, { color: colors.background }]}>Retry</Text>
+          </Pressable>
         </View>
       ) : (
         <FlatList
@@ -139,6 +164,16 @@ export default function ChannelScreen() {
           keyExtractor={(it, idx) => `${it.url}-${idx}`}
           renderItem={({ item }) => <VideoCard item={item} variant="feed" />}
           ListHeaderComponent={Header}
+          ListEmptyComponent={
+            tab === "videos" ? (
+              <View style={styles.empty}>
+                <Feather name="video-off" size={22} color={colors.mutedForeground} />
+                <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+                  No videos available
+                </Text>
+              </View>
+            ) : null
+          }
           contentContainerStyle={{ paddingBottom: 140 }}
           showsVerticalScrollIndicator={false}
         />
@@ -159,7 +194,12 @@ const styles = StyleSheet.create({
   },
   headerTitle: { flex: 1, fontSize: 16, fontFamily: "Inter_700Bold", letterSpacing: -0.2, marginLeft: 4 },
   iconBtn: { padding: 10 },
-  center: { padding: 40, alignItems: "center" },
+  center: { padding: 40, alignItems: "center", gap: 10 },
+  empty: { padding: 30, alignItems: "center", gap: 10 },
+  emptyTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
+  emptyText: { fontSize: 13, fontFamily: "Inter_400Regular", textAlign: "center" },
+  retryBtn: { paddingHorizontal: 22, paddingVertical: 10, borderRadius: 999, marginTop: 6 },
+  retryText: { fontSize: 13, fontFamily: "Inter_700Bold" },
   banner: { width: "100%", aspectRatio: 16 / 5 },
   profileRow: {
     flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingTop: 16, gap: 14,

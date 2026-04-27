@@ -25,7 +25,6 @@ import {
   extractChannelId,
   extractVideoId,
   pipedSearch,
-  pipedTrending,
   type PipedSearchItem,
   type PipedStreamItem,
 } from "@/lib/piped";
@@ -44,21 +43,20 @@ const MOODS: Mood[] = [
   { key: "Party", q: "party songs" },
 ];
 
-// Worldwide regions for global trending music
-const MUSIC_REGIONS = ["US", "GB", "IN", "BD", "JP", "KR", "BR", "DE", "FR", "MX"] as const;
-
-// Heuristic: is this trending item a music track? (filter out shorts/news/clips)
-const MUSIC_TITLE_RX =
-  /\b(official\s+(music\s+)?video|official\s+audio|lyrics?|lyric\s+video|music\s+video|mv|song|audio|visualizer|cover|remix|live\s+performance)\b|\(official|\[official|【official|\[mv\]|【mv】/i;
-const MUSIC_CHANNEL_RX = /(VEVO|- Topic|Official|Music|Records|Recordings|Studios)$/i;
-
-function isMusicLike(it: PipedStreamItem): boolean {
-  if (!it || !it.title) return false;
-  if (it.duration && (it.duration < 60 || it.duration > 900)) return false;
-  if (MUSIC_TITLE_RX.test(it.title)) return true;
-  if (it.uploaderName && MUSIC_CHANNEL_RX.test(it.uploaderName)) return true;
-  return false;
-}
+// Curated worldwide trending music queries — Piped's /trending endpoint returns
+// general videos (vlogs/news/reality), so we use targeted music searches instead.
+const TRENDING_MUSIC_QUERIES = [
+  "billboard hot 100 this week",
+  "global top 50 spotify",
+  "trending music this week",
+  "top hits 2026",
+  "viral music tiktok 2026",
+  "k-pop hits trending",
+  "afrobeats hits 2026",
+  "latin hits global",
+  "bollywood top songs new",
+  "bangla hits new",
+] as const;
 
 function dedupeByVideoId(items: PipedStreamItem[]): PipedStreamItem[] {
   const seen = new Set<string>();
@@ -135,25 +133,30 @@ export default function MusicScreen() {
 
   const isTrending = mood.key === "Trending";
 
-  // Worldwide trending music — fan out across regions, dedupe, music-filter.
+  // Worldwide trending music — fan out across multiple curated music searches,
+  // dedupe & merge. This gives real music (Billboard/Spotify-style) rather than
+  // vlogs from the /trending endpoint.
   const trendingQ = useQuery({
     queryKey: ["m-global-trending", seed],
     enabled: isTrending,
     staleTime: 1000 * 60 * 10,
     queryFn: async () => {
       const settled = await Promise.allSettled(
-        MUSIC_REGIONS.map((r) => pipedTrending(r)),
+        TRENDING_MUSIC_QUERIES.map((q) => pipedSearch(q, "music_songs")),
       );
       const flat: PipedStreamItem[] = [];
       for (const s of settled) {
-        if (s.status === "fulfilled" && Array.isArray(s.value)) {
-          for (const it of s.value) {
-            if (it && it.type === "stream") flat.push(it);
+        if (s.status === "fulfilled" && Array.isArray(s.value?.items)) {
+          for (const it of s.value.items) {
+            if (it && it.type === "stream") flat.push(it as PipedStreamItem);
           }
         }
       }
-      const music = dedupeByVideoId(flat).filter(isMusicLike);
-      return shuffle(music);
+      // Drop items with absurd durations (full albums / hour-long mixes).
+      const cleaned = dedupeByVideoId(flat).filter(
+        (it) => !it.duration || (it.duration >= 30 && it.duration <= 900),
+      );
+      return shuffle(cleaned);
     },
   });
 
