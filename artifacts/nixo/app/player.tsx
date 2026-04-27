@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -15,7 +16,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { VideoActionSheet } from "@/components/VideoActionSheet";
 import { useLibrary } from "@/contexts/LibraryContext";
-import { usePlayer } from "@/contexts/PlayerContext";
+import { usePlayer, type NowPlaying } from "@/contexts/PlayerContext";
 import { useColors } from "@/hooks/useColors";
 import { formatDuration } from "@/lib/piped";
 
@@ -23,7 +24,23 @@ export default function PlayerScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { current, isPlaying, isLoading, toggle, position, duration, seek } = usePlayer();
+  const {
+    current,
+    isPlaying,
+    isLoading,
+    toggle,
+    position,
+    duration,
+    seek,
+    upNext,
+    history,
+    queueIndex,
+    hasNext,
+    hasPrevious,
+    next,
+    previous,
+    playAt,
+  } = usePlayer();
   const { isSaved, save, remove } = useLibrary();
   const [menu, setMenu] = useState(false);
 
@@ -59,118 +76,170 @@ export default function PlayerScreen() {
         style={StyleSheet.absoluteFill}
       />
 
-      {/* Top: minimize chevron + brand + menu */}
-      <View style={[styles.headerRow, { paddingTop: topPad + 4 }]}>
-        <Pressable hitSlop={10} onPress={() => router.back()} style={styles.iconBtn}>
-          <Feather name="chevron-down" size={26} color={colors.foreground} />
-        </Pressable>
-        <View style={{ flex: 1, alignItems: "center" }}>
-          <Text style={[styles.headerLabel, { color: colors.mutedForeground }]}>NOW PLAYING</Text>
-          <Text style={[styles.headerTitle, { color: colors.foreground }]} numberOfLines={1}>
-            {current.artist || "Music"}
-          </Text>
-        </View>
-        <Pressable hitSlop={10} onPress={() => setMenu(true)} style={styles.iconBtn}>
-          <Feather name="more-vertical" size={20} color={colors.foreground} />
-        </Pressable>
-      </View>
-
-      <View style={styles.artworkWrap}>
-        <Image source={{ uri: current.thumbnail }} style={styles.artwork} contentFit="cover" />
-      </View>
-
-      <View style={styles.metaBox}>
-        <Text style={[styles.title, { color: colors.foreground }]} numberOfLines={2}>
-          {current.title}
-        </Text>
-        <Text style={[styles.artist, { color: colors.mutedForeground }]} numberOfLines={1}>
-          {current.artist}
-        </Text>
-      </View>
-
-      <View style={styles.progressBox}>
-        <Pressable
-          style={styles.progressBar}
-          onPress={(e) => {
-            const x = e.nativeEvent.locationX;
-            seek(((x / 320) * duration) || 0);
-          }}
-        >
-          <View style={[styles.progressTrack, { backgroundColor: colors.muted }]}>
-            <View
-              style={[
-                styles.progressFill,
-                { width: `${progress * 100}%`, backgroundColor: colors.foreground },
-              ]}
-            />
-          </View>
-        </Pressable>
-        <View style={styles.timeRow}>
-          <Text style={[styles.time, { color: colors.mutedForeground }]}>
-            {formatDuration(position)}
-          </Text>
-          <Text style={[styles.time, { color: colors.mutedForeground }]}>
-            {formatDuration(duration)}
-          </Text>
-        </View>
-      </View>
-
-      <View style={styles.controlsRow}>
-        <Pressable hitSlop={10} style={styles.ctlSmall}>
-          <Feather name="repeat" size={22} color={colors.foreground} />
-        </Pressable>
-        <Pressable
-          hitSlop={10}
-          style={styles.ctlSmall}
-          onPress={() => seek(Math.max(0, position - 10))}
-        >
-          <Feather name="skip-back" size={28} color={colors.foreground} />
-        </Pressable>
-        <Pressable
-          hitSlop={10}
-          onPress={toggle}
-          style={[styles.playBtn, { backgroundColor: colors.foreground }]}
-        >
-          {isLoading ? (
-            <ActivityIndicator color={colors.background} />
-          ) : (
-            <Feather name={isPlaying ? "pause" : "play"} size={32} color={colors.background} />
-          )}
-        </Pressable>
-        <Pressable
-          hitSlop={10}
-          style={styles.ctlSmall}
-          onPress={() => seek(position + 10)}
-        >
-          <Feather name="skip-forward" size={28} color={colors.foreground} />
-        </Pressable>
-        <Pressable
-          hitSlop={10}
-          style={styles.ctlSmall}
-          onPress={async () => {
-            if (saved) await remove(current.videoId);
-            else
-              await save({
-                videoId: current.videoId,
-                title: current.title,
-                artist: current.artist,
-                thumbnail: current.thumbnail,
-                duration,
-                kind: "audio",
-              });
-          }}
-        >
-          <Feather name="heart" size={22} color={saved ? "#ff5252" : colors.foreground} />
-        </Pressable>
-      </View>
-
-      <Pressable
-        onPress={() => setMenu(true)}
-        style={[styles.downloadRow, { backgroundColor: colors.secondary }]}
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingBottom: 40 }}
+        showsVerticalScrollIndicator={false}
       >
-        <Feather name="download" size={18} color={colors.foreground} />
-        <Text style={[styles.downloadText, { color: colors.foreground }]}>Download</Text>
-      </Pressable>
+        {/* Top: minimize chevron + brand + menu */}
+        <View style={[styles.headerRow, { paddingTop: topPad + 4 }]}>
+          <Pressable hitSlop={10} onPress={() => router.back()} style={styles.iconBtn}>
+            <Feather name="chevron-down" size={26} color={colors.foreground} />
+          </Pressable>
+          <View style={{ flex: 1, alignItems: "center" }}>
+            <Text style={[styles.headerLabel, { color: colors.mutedForeground }]}>NOW PLAYING</Text>
+            <Text style={[styles.headerTitle, { color: colors.foreground }]} numberOfLines={1}>
+              {current.artist || "Music"}
+            </Text>
+          </View>
+          <Pressable hitSlop={10} onPress={() => setMenu(true)} style={styles.iconBtn}>
+            <Feather name="more-vertical" size={20} color={colors.foreground} />
+          </Pressable>
+        </View>
+
+        <View style={styles.artworkWrap}>
+          <Image source={{ uri: current.thumbnail }} style={styles.artwork} contentFit="cover" />
+        </View>
+
+        <View style={styles.metaBox}>
+          <Text style={[styles.title, { color: colors.foreground }]} numberOfLines={2}>
+            {current.title}
+          </Text>
+          <Text style={[styles.artist, { color: colors.mutedForeground }]} numberOfLines={1}>
+            {current.artist}
+          </Text>
+        </View>
+
+        <View style={styles.progressBox}>
+          <Pressable
+            style={styles.progressBar}
+            onPress={(e) => {
+              const x = e.nativeEvent.locationX;
+              seek(((x / 320) * duration) || 0);
+            }}
+          >
+            <View style={[styles.progressTrack, { backgroundColor: colors.muted }]}>
+              <View
+                style={[
+                  styles.progressFill,
+                  { width: `${progress * 100}%`, backgroundColor: colors.foreground },
+                ]}
+              />
+            </View>
+          </Pressable>
+          <View style={styles.timeRow}>
+            <Text style={[styles.time, { color: colors.mutedForeground }]}>
+              {formatDuration(position)}
+            </Text>
+            <Text style={[styles.time, { color: colors.mutedForeground }]}>
+              {formatDuration(duration)}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.controlsRow}>
+          <Pressable hitSlop={10} style={styles.ctlSmall}>
+            <Feather name="repeat" size={22} color={colors.foreground} />
+          </Pressable>
+          <Pressable
+            hitSlop={10}
+            style={[styles.ctlSmall, !hasPrevious && { opacity: 0.35 }]}
+            onPress={previous}
+          >
+            <Feather name="skip-back" size={28} color={colors.foreground} />
+          </Pressable>
+          <Pressable
+            hitSlop={10}
+            onPress={toggle}
+            style={[styles.playBtn, { backgroundColor: colors.foreground }]}
+          >
+            {isLoading ? (
+              <ActivityIndicator color={colors.background} />
+            ) : (
+              <Feather name={isPlaying ? "pause" : "play"} size={32} color={colors.background} />
+            )}
+          </Pressable>
+          <Pressable
+            hitSlop={10}
+            style={[styles.ctlSmall, !hasNext && { opacity: 0.35 }]}
+            onPress={next}
+          >
+            <Feather name="skip-forward" size={28} color={colors.foreground} />
+          </Pressable>
+          <Pressable
+            hitSlop={10}
+            style={styles.ctlSmall}
+            onPress={async () => {
+              if (saved) await remove(current.videoId);
+              else
+                await save({
+                  videoId: current.videoId,
+                  title: current.title,
+                  artist: current.artist,
+                  thumbnail: current.thumbnail,
+                  duration,
+                  kind: "audio",
+                });
+            }}
+          >
+            <Feather name="heart" size={22} color={saved ? "#ff5252" : colors.foreground} />
+          </Pressable>
+        </View>
+
+        <Pressable
+          onPress={() => setMenu(true)}
+          style={[styles.downloadRow, { backgroundColor: colors.secondary }]}
+        >
+          <Feather name="download" size={18} color={colors.foreground} />
+          <Text style={[styles.downloadText, { color: colors.foreground }]}>Download</Text>
+        </Pressable>
+
+        {/* YT Music style "Up next" list with previously-played history. */}
+        {(upNext.length > 0 || history.length > 0) ? (
+          <View style={styles.queueWrap}>
+            <View style={styles.queueHeader}>
+              <Text style={[styles.queueTitle, { color: colors.foreground }]}>Up next</Text>
+              <Text style={[styles.queueSub, { color: colors.mutedForeground }]}>
+                Autoplay is on
+              </Text>
+            </View>
+
+            {upNext.map((track, i) => (
+              <QueueRow
+                key={`up-${track.videoId}-${i}`}
+                item={track}
+                colors={colors}
+                onPress={() => playAt(queueIndex + 1 + i)}
+              />
+            ))}
+
+            {history.length > 0 ? (
+              <>
+                <Text
+                  style={[
+                    styles.queueTitle,
+                    { color: colors.foreground, marginTop: 22 },
+                  ]}
+                >
+                  Recently played
+                </Text>
+                {[...history].reverse().slice(0, 8).map((track, i) => {
+                  const realIdx = queueIndex - 1 - i;
+                  return (
+                    <QueueRow
+                      key={`h-${track.videoId}-${i}`}
+                      item={track}
+                      colors={colors}
+                      muted
+                      onPress={() => playAt(realIdx)}
+                    />
+                  );
+                })}
+              </>
+            ) : null}
+          </View>
+        ) : null}
+      </ScrollView>
 
       <VideoActionSheet
         visible={menu}
@@ -182,6 +251,39 @@ export default function PlayerScreen() {
         duration={duration}
       />
     </View>
+  );
+}
+
+function QueueRow({
+  item,
+  colors,
+  onPress,
+  muted,
+}: {
+  item: NowPlaying;
+  colors: ReturnType<typeof useColors>;
+  onPress: () => void;
+  muted?: boolean;
+}) {
+  return (
+    <Pressable onPress={onPress} style={styles.queueRow}>
+      <Image source={{ uri: item.thumbnail }} style={styles.queueThumb} contentFit="cover" />
+      <View style={{ flex: 1 }}>
+        <Text
+          numberOfLines={1}
+          style={[
+            styles.queueRowTitle,
+            { color: muted ? colors.mutedForeground : colors.foreground },
+          ]}
+        >
+          {item.title}
+        </Text>
+        <Text numberOfLines={1} style={[styles.queueRowArtist, { color: colors.mutedForeground }]}>
+          {item.artist}
+        </Text>
+      </View>
+      <Feather name="more-vertical" size={18} color={colors.mutedForeground} />
+    </Pressable>
   );
 }
 
@@ -252,4 +354,28 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   downloadText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+
+  queueWrap: {
+    marginTop: 28,
+    paddingHorizontal: 16,
+  },
+  queueHeader: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+    paddingHorizontal: 4,
+    marginBottom: 6,
+  },
+  queueTitle: { fontSize: 16, fontFamily: "Inter_700Bold" },
+  queueSub: { fontSize: 11, fontFamily: "Inter_500Medium" },
+  queueRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+  },
+  queueThumb: { width: 48, height: 48, borderRadius: 6, backgroundColor: "#000" },
+  queueRowTitle: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  queueRowArtist: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
 });

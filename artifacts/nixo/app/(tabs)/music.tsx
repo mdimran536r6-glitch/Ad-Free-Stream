@@ -30,18 +30,129 @@ import {
   type PipedStreamItem,
 } from "@/lib/piped";
 
-type Mood = { key: string; q: string };
+type Mood = {
+  key: string;
+  /** Primary query used for individual section fetches (artists / albums). */
+  q: string;
+  /** Multiple seed queries fanned out and merged for the songs/videos shelves. */
+  seeds: string[];
+};
+// Each mood has language- or genre-specific seeds so different chips actually
+// surface different content. Bangla uses Bengali-script terms + Bangladeshi
+// artist names so it does not overlap with Hindi / English shelves.
 const MOODS: Mood[] = [
-  { key: "Trending", q: "" },
-  { key: "Bangla", q: "bangla songs new" },
-  { key: "Hindi", q: "bollywood hits" },
-  { key: "English", q: "top hits english" },
-  { key: "Lo-fi", q: "lofi music" },
-  { key: "Workout", q: "workout music" },
-  { key: "Chill", q: "chill music" },
-  { key: "Devotional", q: "devotional songs" },
-  { key: "Romantic", q: "romantic songs new" },
-  { key: "Party", q: "party songs" },
+  { key: "Trending", q: "", seeds: [] },
+  {
+    key: "Bangla",
+    q: "বাংলা গান",
+    seeds: [
+      "বাংলা গান নতুন",
+      "bangla new song 2026",
+      "bengali song hit",
+      "tahsan bangla song",
+      "habib wahid bangla",
+      "arnob bangla song",
+      "rabindra sangeet new",
+      "nazrul geeti popular",
+      "bangla band song",
+      "minar rahman song",
+    ],
+  },
+  {
+    key: "Hindi",
+    q: "हिंदी गाने नए",
+    seeds: [
+      "hindi song new 2026",
+      "bollywood new song",
+      "arijit singh song",
+      "hindi romantic song",
+      "neha kakkar song",
+      "shreya ghoshal song",
+      "hindi hit song latest",
+      "punjabi hindi song mix",
+      "atif aslam hindi",
+      "kk hindi songs",
+    ],
+  },
+  {
+    key: "English",
+    q: "english pop song new",
+    seeds: [
+      "billboard hot 100 this week",
+      "english pop song 2026",
+      "the weeknd song",
+      "taylor swift song",
+      "ed sheeran song",
+      "dua lipa song",
+      "drake song",
+      "bruno mars song",
+    ],
+  },
+  {
+    key: "Lo-fi",
+    q: "lofi hip hop beats",
+    seeds: [
+      "lofi hip hop beats",
+      "chillhop instrumental",
+      "lofi study music",
+      "lofi sleep mix",
+    ],
+  },
+  {
+    key: "Workout",
+    q: "workout gym music",
+    seeds: [
+      "workout gym music",
+      "edm workout mix",
+      "hip hop workout playlist",
+      "high intensity training music",
+    ],
+  },
+  {
+    key: "Chill",
+    q: "chill acoustic music",
+    seeds: [
+      "chill acoustic music",
+      "indie chill playlist",
+      "soft pop chill",
+      "chill beats relax",
+    ],
+  },
+  {
+    key: "Devotional",
+    q: "bhakti devotional songs",
+    seeds: [
+      "hanuman chalisa",
+      "krishna bhajan",
+      "shiv bhajan",
+      "islamic naat audio",
+      "bangla islamic song",
+      "qawwali nusrat fateh",
+      "gayatri mantra chant",
+    ],
+  },
+  {
+    key: "Romantic",
+    q: "romantic love songs",
+    seeds: [
+      "hindi romantic song",
+      "bangla romantic song",
+      "english love songs slow",
+      "punjabi romantic song",
+      "tamil romantic song",
+    ],
+  },
+  {
+    key: "Party",
+    q: "party dance songs",
+    seeds: [
+      "party dance songs hindi",
+      "bollywood party song",
+      "english club song",
+      "punjabi party song",
+      "edm party hits",
+    ],
+  },
 ];
 
 // Curated worldwide trending music queries — Piped's /trending endpoint returns
@@ -189,12 +300,54 @@ export default function MusicScreen() {
     },
   });
 
-  // Search-based mood feeds (skipped when trending mode is active)
+  // Search-based mood feeds (skipped when trending mode is active).
+  // Songs/videos shelves fan out across multiple language-specific seeds and
+  // merge so different chips actually surface different content.
   const searchEnabled = !isTrending;
+  const moodSongsFanOut = useQuery({
+    queryKey: ["m-songs-fan", mood.key, seed],
+    enabled: searchEnabled && mood.seeds.length > 0,
+    staleTime: 1000 * 60 * 5,
+    queryFn: async () => {
+      const settled = await Promise.allSettled(
+        mood.seeds.map((q) => pipedSearch(q, "music_songs")),
+      );
+      const flat: PipedStreamItem[] = [];
+      for (const s of settled) {
+        if (s.status === "fulfilled" && Array.isArray(s.value?.items)) {
+          for (const it of s.value.items) {
+            if (it && it.type === "stream") flat.push(it as PipedStreamItem);
+          }
+        }
+      }
+      const cleaned = dedupeByVideoId(flat).filter(
+        (it) => !it.duration || (it.duration >= 30 && it.duration <= 900),
+      );
+      return shuffle(cleaned);
+    },
+  });
+  const moodVideosFanOut = useQuery({
+    queryKey: ["m-vids-fan", mood.key, seed],
+    enabled: searchEnabled && mood.seeds.length > 0,
+    staleTime: 1000 * 60 * 5,
+    queryFn: async () => {
+      const settled = await Promise.allSettled(
+        mood.seeds.slice(0, 4).map((q) => pipedSearch(q, "music_videos")),
+      );
+      const flat: PipedStreamItem[] = [];
+      for (const s of settled) {
+        if (s.status === "fulfilled" && Array.isArray(s.value?.items)) {
+          for (const it of s.value.items) {
+            if (it && it.type === "stream") flat.push(it as PipedStreamItem);
+          }
+        }
+      }
+      return dedupeByVideoId(flat);
+    },
+  });
+
   const queries = useQueries({
     queries: [
-      { queryKey: ["m-songs", mood.q, seed], queryFn: () => pipedSearch(mood.q, "music_songs"), staleTime: 1000 * 60 * 5, enabled: searchEnabled },
-      { queryKey: ["m-vids", mood.q, seed], queryFn: () => pipedSearch(mood.q, "music_videos"), staleTime: 1000 * 60 * 5, enabled: searchEnabled },
       { queryKey: ["m-albums", mood.q, seed], queryFn: () => pipedSearch(mood.q, "music_albums"), staleTime: 1000 * 60 * 5, enabled: searchEnabled },
       { queryKey: ["m-artists", mood.q, seed], queryFn: () => pipedSearch(mood.q, "music_artists"), staleTime: 1000 * 60 * 5, enabled: searchEnabled },
       { queryKey: ["m-playlists", mood.q, seed], queryFn: () => pipedSearch(mood.q, "music_playlists"), staleTime: 1000 * 60 * 5, enabled: searchEnabled },
@@ -211,7 +364,7 @@ export default function MusicScreen() {
     ],
   });
 
-  const [songs, vids, albums, artists, playlists] = queries;
+  const [albums, artists, playlists] = queries;
   const [trArtists, trAlbums, trPlaylists] = trendingExtras;
 
   const moreItems = useMemo<PipedStreamItem[]>(() => {
@@ -227,8 +380,8 @@ export default function MusicScreen() {
   // SONGS / VIDEOS shelves
   const songItems = useMemo<PipedStreamItem[]>(() => {
     if (isTrending) return trendingQ.data ?? [];
-    return filterStreams(songs.data?.items);
-  }, [isTrending, trendingQ.data, songs.data]);
+    return moodSongsFanOut.data ?? [];
+  }, [isTrending, trendingQ.data, moodSongsFanOut.data]);
 
   const videoItems = useMemo<PipedStreamItem[]>(() => {
     if (isTrending) {
@@ -237,8 +390,8 @@ export default function MusicScreen() {
         .sort((a, b) => (b.duration ?? 0) - (a.duration ?? 0))
         .slice(0, 20);
     }
-    return filterStreams(vids.data?.items);
-  }, [isTrending, trendingQ.data, vids.data]);
+    return moodVideosFanOut.data ?? [];
+  }, [isTrending, trendingQ.data, moodVideosFanOut.data]);
 
   // ALBUMS / ARTISTS / PLAYLISTS shelves
   const albumsSrc = isTrending ? trAlbums.data?.items : albums.data?.items;
@@ -259,7 +412,7 @@ export default function MusicScreen() {
 
   const isLoading = isTrending
     ? trendingQ.isLoading
-    : queries.every((q) => q.isLoading);
+    : moodSongsFanOut.isLoading;
   const hero = songItems[0];
 
   const handleMoodPress = (m: typeof MOODS[number]) => {
@@ -272,6 +425,31 @@ export default function MusicScreen() {
 
   const webTop = Platform.OS === "web" ? 67 : 0;
   const topPad = insets.top + webTop;
+
+  // Build a NowPlaying queue from a list of stream items so playback continues
+  // through related songs YouTube-Music style.
+  const toQueue = useCallback((items: PipedStreamItem[]) => {
+    return items
+      .map((it) => ({
+        videoId: extractVideoId(it.url),
+        title: it.title,
+        artist: it.uploaderName,
+        thumbnail: it.thumbnail,
+      }))
+      .filter((t) => !!t.videoId);
+  }, []);
+
+  const playFromList = useCallback(
+    (items: PipedStreamItem[], startIndex: number) => {
+      const q = toQueue(items);
+      const start = Math.max(0, Math.min(startIndex, q.length - 1));
+      if (q.length === 0) return;
+      // Re-order so the tapped track is first; the rest become Up next.
+      const ordered = [...q.slice(start), ...q.slice(0, start)];
+      play(ordered[0], { queue: ordered });
+    },
+    [play, toQueue],
+  );
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -351,14 +529,25 @@ export default function MusicScreen() {
           </View>
         ) : (
           <>
-            {hero ? <Hero item={hero} onPlay={play} colors={colors} /> : null}
+            {hero ? (
+              <Hero
+                item={hero}
+                onPlay={() => playFromList(songItems, 0)}
+                colors={colors}
+              />
+            ) : null}
 
             {songItems.length > 0 ? (
               <>
                 <SectionHeader title="Quick picks" colors={colors} />
                 <View style={styles.quickGrid}>
-                  {songItems.slice(0, 8).map((it) => (
-                    <SongTile key={it.url} item={it} onPlay={play} colors={colors} />
+                  {songItems.slice(0, 8).map((it, i) => (
+                    <SongTile
+                      key={it.url}
+                      item={it}
+                      onPlay={() => playFromList(songItems, i)}
+                      colors={colors}
+                    />
                   ))}
                 </View>
               </>
@@ -497,19 +686,11 @@ export default function MusicScreen() {
               <>
                 <SectionHeader title="More music" colors={colors} />
                 <View style={{ paddingHorizontal: 8 }}>
-                  {moreItems.map((it) => {
-                    const id = extractVideoId(it.url);
+                  {moreItems.map((it, i) => {
                     return (
                       <Pressable
                         key={`more-${it.url}`}
-                        onPress={() =>
-                          play({
-                            videoId: id,
-                            title: it.title,
-                            artist: it.uploaderName,
-                            thumbnail: it.thumbnail,
-                          })
-                        }
+                        onPress={() => playFromList(moreItems, i)}
                         style={styles.moreRow}
                       >
                         <Image
@@ -565,10 +746,9 @@ function Hero({
   colors,
 }: {
   item: PipedStreamItem;
-  onPlay: (t: { videoId: string; title: string; artist: string; thumbnail: string }) => void;
+  onPlay: () => void;
   colors: ReturnType<typeof useColors>;
 }) {
-  const id = extractVideoId(item.url);
   return (
     <View style={[styles.hero, { backgroundColor: colors.muted }]}>
       <Image source={{ uri: item.thumbnail }} style={StyleSheet.absoluteFill} contentFit="cover" blurRadius={30} />
@@ -588,9 +768,7 @@ function Hero({
           </Text>
           <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
             <Pressable
-              onPress={() =>
-                onPlay({ videoId: id, title: item.title, artist: item.uploaderName, thumbnail: item.thumbnail })
-              }
+              onPress={onPlay}
               style={[styles.heroPlay, { backgroundColor: colors.foreground }]}
             >
               <Feather name="play" size={14} color={colors.background} />
@@ -609,7 +787,7 @@ function SongTile({
   colors,
 }: {
   item: PipedStreamItem;
-  onPlay: (t: { videoId: string; title: string; artist: string; thumbnail: string }) => void;
+  onPlay: () => void;
   colors: ReturnType<typeof useColors>;
 }) {
   const [menu, setMenu] = useState(false);
@@ -617,9 +795,7 @@ function SongTile({
   return (
     <>
       <Pressable
-        onPress={() =>
-          onPlay({ videoId: id, title: item.title, artist: item.uploaderName, thumbnail: item.thumbnail })
-        }
+        onPress={onPlay}
         style={[styles.quickRow, { backgroundColor: colors.secondary }]}
       >
         <Image source={{ uri: item.thumbnail }} style={styles.quickThumb} contentFit="cover" />

@@ -9,7 +9,17 @@ import { usePlayer } from "@/contexts/PlayerContext";
 import { useColors } from "@/hooks/useColors";
 
 export function MiniPlayer() {
-  const { current, isPlaying, isLoading, toggle, stop, position, duration } = usePlayer();
+  const {
+    current,
+    isPlaying,
+    isLoading,
+    toggle,
+    stop,
+    position,
+    duration,
+    next,
+    hasNext,
+  } = usePlayer();
   const colors = useColors();
   const router = useRouter();
   const [menu, setMenu] = useState(false);
@@ -31,12 +41,19 @@ export function MiniPlayer() {
           {current.artist}
         </Text>
       </View>
-      <Pressable hitSlop={10} onPress={toggle} style={styles.btn}>
+      <Pressable hitSlop={10} onPress={(e) => { e.stopPropagation(); toggle(); }} style={styles.btn}>
         {isLoading ? (
           <ActivityIndicator color={colors.foreground} />
         ) : (
           <Feather name={isPlaying ? "pause" : "play"} size={22} color={colors.foreground} />
         )}
+      </Pressable>
+      <Pressable
+        hitSlop={10}
+        onPress={(e) => { e.stopPropagation(); next(); }}
+        style={[styles.btn, !hasNext && { opacity: 0.35 }]}
+      >
+        <Feather name="skip-forward" size={20} color={colors.foreground} />
       </Pressable>
       <Pressable hitSlop={10} onPress={(e) => { e.stopPropagation(); setMenu(true); }} style={styles.btn}>
         <Feather name="more-vertical" size={20} color={colors.mutedForeground} />
@@ -61,7 +78,7 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
+    gap: 6,
     padding: 8,
     borderTopWidth: 1,
     overflow: "hidden",
@@ -73,8 +90,8 @@ const styles = StyleSheet.create({
     height: 2,
   },
   thumb: { width: 44, height: 44, borderRadius: 8 },
-  meta: { flex: 1 },
+  meta: { flex: 1, paddingHorizontal: 4 },
   title: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   artist: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
-  btn: { padding: 8 },
+  btn: { padding: 6 },
 });
