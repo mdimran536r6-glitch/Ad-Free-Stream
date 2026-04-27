@@ -398,7 +398,15 @@ export default function MusicScreen() {
                       <Pressable
                         onPress={() => {
                           if (!cid) return;
-                          router.push(`/channel/${cid}`);
+                          router.push({
+                            pathname: "/channel/[id]",
+                            params: {
+                              id: cid,
+                              name: item.name,
+                              subs: String(item.subscribers ?? ""),
+                              avatar: item.thumbnail ?? "",
+                            },
+                          });
                         }}
                         style={styles.artistCard}
                       >

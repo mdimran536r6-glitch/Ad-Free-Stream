@@ -1,13 +1,14 @@
 import { Feather } from "@expo/vector-icons";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -16,17 +17,71 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { BottomNav } from "@/components/BottomNav";
 import { VideoCard } from "@/components/VideoCard";
+import { usePlayer } from "@/contexts/PlayerContext";
 import { useColors } from "@/hooks/useColors";
-import { pipedChannel } from "@/lib/piped";
+import {
+  extractVideoId,
+  pipedChannel,
+  pipedSearch,
+  type PipedPlaylistItem,
+  type PipedSearchItem,
+  type PipedStreamItem,
+} from "@/lib/piped";
 
-type Tab = "videos" | "about";
+type Tab = "songs" | "albums" | "videos" | "about";
+const TABS: { key: Tab; label: string }[] = [
+  { key: "songs", label: "Songs" },
+  { key: "albums", label: "Albums" },
+  { key: "videos", label: "Videos" },
+  { key: "about", label: "About" },
+];
+
+function formatSubs(n?: number | null): string {
+  if (n == null || n < 0) return "";
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B subscribers`;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M subscribers`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K subscribers`;
+  if (n === 0) return "";
+  return `${n} subscribers`;
+}
+
+function isStream(i: PipedSearchItem): i is PipedStreamItem {
+  return i.type === "stream";
+}
+function isPlaylist(i: PipedSearchItem): i is PipedPlaylistItem {
+  return i.type === "playlist";
+}
+
+// Strip generic suffixes ("- Topic", "VEVO") so search returns the artist itself.
+function normalizeArtistName(name?: string | null): string {
+  if (!name) return "";
+  return name.replace(/\s*-\s*Topic\s*$/i, "").replace(/VEVO\s*$/i, "").trim();
+}
+
+function matchesUploader(uploader: string | undefined | null, artist: string): boolean {
+  if (!uploader || !artist) return true;
+  const u = uploader.toLowerCase();
+  const a = artist.toLowerCase();
+  return u.includes(a) || a.includes(u.replace(/\s*-\s*topic$/i, "").replace(/\s*vevo$/i, "").trim());
+}
 
 export default function ChannelScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const params = useLocalSearchParams<{
+    id: string;
+    name?: string;
+    subs?: string;
+    avatar?: string;
+  }>();
+  const id = params.id;
+  const fallbackName = params.name ?? "";
+  const fallbackSubs = params.subs ? Number(params.subs) : undefined;
+  const fallbackAvatar = params.avatar ?? "";
+
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const [tab, setTab] = useState<Tab>("videos");
+  const { play } = usePlayer();
+  const [tab, setTab] = useState<Tab>("songs");
   const [subscribed, setSubscribed] = useState(false);
 
   const channel = useQuery({
@@ -35,18 +90,72 @@ export default function ChannelScreen() {
     enabled: !!id,
   });
 
-  if (!id) return null;
   const data = channel.data;
+  const displayName = data?.name || fallbackName;
+  const artistName = normalizeArtistName(displayName);
+  const avatar = data?.avatarUrl || fallbackAvatar;
+  const subsRaw = data?.subscriberCount;
+  const subs =
+    typeof subsRaw === "number" && subsRaw >= 0 ? subsRaw : fallbackSubs ?? -1;
+
+  // Fan-out search by artist name to populate Songs/Albums/Videos shelves.
+  // This is what makes "- Topic" channels (which have empty relatedStreams)
+  // actually show content.
+  const enableSearch = !!artistName;
+  const [songsQ, albumsQ, mvQ] = useQueries({
+    queries: [
+      {
+        queryKey: ["ch-songs", artistName],
+        queryFn: () => pipedSearch(artistName, "music_songs"),
+        enabled: enableSearch,
+        staleTime: 1000 * 60 * 10,
+      },
+      {
+        queryKey: ["ch-albums", artistName],
+        queryFn: () => pipedSearch(artistName, "music_albums"),
+        enabled: enableSearch,
+        staleTime: 1000 * 60 * 10,
+      },
+      {
+        queryKey: ["ch-mv", artistName],
+        queryFn: () => pipedSearch(artistName, "music_videos"),
+        enabled: enableSearch,
+        staleTime: 1000 * 60 * 10,
+      },
+    ],
+  });
+
+  const songs = useMemo<PipedStreamItem[]>(() => {
+    const items = (songsQ.data?.items ?? []).filter(isStream);
+    return items.filter((it) => matchesUploader(it.uploaderName, artistName));
+  }, [songsQ.data, artistName]);
+
+  const albums = useMemo<PipedPlaylistItem[]>(() => {
+    const items = (albumsQ.data?.items ?? []).filter(isPlaylist);
+    return items.filter((it) => matchesUploader(it.uploaderName, artistName));
+  }, [albumsQ.data, artistName]);
+
+  const videos = useMemo<PipedStreamItem[]>(() => {
+    const fromChannel = (data?.relatedStreams ?? []).filter(Boolean);
+    if (fromChannel.length > 0) return fromChannel;
+    // Fallback: music videos search filtered by uploader.
+    const items = (mvQ.data?.items ?? []).filter(isStream);
+    return items.filter((it) => matchesUploader(it.uploaderName, artistName));
+  }, [data?.relatedStreams, mvQ.data, artistName]);
+
+  if (!id) return null;
   const webTop = Platform.OS === "web" ? 67 : 0;
   const topPad = insets.top + webTop;
 
-  const formatSubs = (n?: number | null): string => {
-    if (n == null || n < 0) return "";
-    if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B subscribers`;
-    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M subscribers`;
-    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K subscribers`;
-    if (n === 0) return "";
-    return `${n} subscribers`;
+  const isLoadingHeader = channel.isLoading && !displayName;
+
+  const playSong = (it: PipedStreamItem) => {
+    play({
+      videoId: extractVideoId(it.url),
+      title: it.title,
+      artist: it.uploaderName,
+      thumbnail: it.thumbnail,
+    });
   };
 
   const Header = (
@@ -58,17 +167,25 @@ export default function ChannelScreen() {
       )}
 
       <View style={styles.profileRow}>
-        <Image source={{ uri: data?.avatarUrl }} style={styles.avatar} contentFit="cover" />
+        {avatar ? (
+          <Image source={{ uri: avatar }} style={styles.avatar} contentFit="cover" />
+        ) : (
+          <View style={[styles.avatar, { backgroundColor: colors.muted }]} />
+        )}
         <View style={{ flex: 1 }}>
           <Text style={[styles.name, { color: colors.foreground }]} numberOfLines={1}>
-            {data?.name}
+            {displayName}
             {data?.verified ? "  ✓" : ""}
           </Text>
-          {formatSubs(data?.subscriberCount) ? (
+          {formatSubs(subs) ? (
             <Text style={[styles.sub, { color: colors.mutedForeground }]}>
-              {formatSubs(data?.subscriberCount)}
+              {formatSubs(subs)}
             </Text>
-          ) : null}
+          ) : (
+            <Text style={[styles.sub, { color: colors.mutedForeground }]}>
+              Artist
+            </Text>
+          )}
         </View>
       </View>
 
@@ -91,32 +208,178 @@ export default function ChannelScreen() {
             {subscribed ? "SUBSCRIBED" : "SUBSCRIBE"}
           </Text>
         </Pressable>
+        {songs.length > 0 ? (
+          <Pressable
+            onPress={() => playSong(songs[0])}
+            style={[styles.playBtn, { backgroundColor: colors.primary }]}
+          >
+            <Feather name="play" size={14} color="#fff" />
+            <Text style={styles.playBtnText}>Play</Text>
+          </Pressable>
+        ) : null}
       </View>
 
-      <View style={styles.tabsRow}>
-        {(["videos", "about"] as Tab[]).map((t) => {
-          const active = tab === t;
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.tabsRow}
+        contentContainerStyle={{ paddingHorizontal: 8 }}
+      >
+        {TABS.map((t) => {
+          const active = tab === t.key;
           return (
-            <Pressable key={t} onPress={() => setTab(t)} style={styles.tabBtn}>
+            <Pressable key={t.key} onPress={() => setTab(t.key)} style={styles.tabBtn}>
               <Text
                 style={[
                   styles.tabText,
                   { color: active ? colors.foreground : colors.mutedForeground },
                 ]}
               >
-                {t === "videos" ? "Videos" : "About"}
+                {t.label}
               </Text>
-              {active ? <View style={[styles.tabUnderline, { backgroundColor: colors.primary }]} /> : null}
+              {active ? (
+                <View style={[styles.tabUnderline, { backgroundColor: colors.primary }]} />
+              ) : null}
             </Pressable>
           );
         })}
-      </View>
-
-      {tab === "about" && data?.description ? (
-        <Text style={[styles.desc, { color: colors.foreground }]}>{data.description}</Text>
-      ) : null}
+      </ScrollView>
     </View>
   );
+
+  const songsLoading = songsQ.isLoading;
+  const albumsLoading = albumsQ.isLoading;
+  const videosLoading = channel.isLoading || mvQ.isLoading;
+
+  const renderSong = ({ item, index }: { item: PipedStreamItem; index: number }) => (
+    <Pressable onPress={() => playSong(item)} style={styles.songRow}>
+      <Text style={[styles.idx, { color: colors.mutedForeground }]}>{index + 1}</Text>
+      <Image source={{ uri: item.thumbnail }} style={styles.songThumb} contentFit="cover" />
+      <View style={{ flex: 1 }}>
+        <Text numberOfLines={1} style={[styles.songTitle, { color: colors.foreground }]}>
+          {item.title}
+        </Text>
+        <Text numberOfLines={1} style={[styles.songSub, { color: colors.mutedForeground }]}>
+          {item.uploaderName}
+        </Text>
+      </View>
+    </Pressable>
+  );
+
+  const renderAlbum = ({ item }: { item: PipedPlaylistItem }) => {
+    const pid = item.url.replace(/^\/playlist\?list=/, "").replace(/^\//, "");
+    return (
+      <Pressable
+        onPress={() => router.push(`/playlist/${encodeURIComponent(pid)}`)}
+        style={styles.albumCard}
+      >
+        <Image source={{ uri: item.thumbnail }} style={styles.albumArt} contentFit="cover" />
+        <Text numberOfLines={2} style={[styles.albumTitle, { color: colors.foreground }]}>
+          {item.name}
+        </Text>
+        {item.uploaderName ? (
+          <Text numberOfLines={1} style={[styles.albumArtist, { color: colors.mutedForeground }]}>
+            Album · {item.uploaderName}
+          </Text>
+        ) : null}
+      </Pressable>
+    );
+  };
+
+  const TabBody = () => {
+    if (tab === "about") {
+      return (
+        <View style={styles.aboutBox}>
+          {data?.description ? (
+            <Text style={[styles.desc, { color: colors.foreground }]}>{data.description}</Text>
+          ) : (
+            <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+              No description available.
+            </Text>
+          )}
+        </View>
+      );
+    }
+    if (tab === "songs") {
+      if (songsLoading) {
+        return (
+          <View style={styles.empty}>
+            <ActivityIndicator color={colors.primary} />
+          </View>
+        );
+      }
+      if (songs.length === 0) {
+        return (
+          <View style={styles.empty}>
+            <Feather name="music" size={22} color={colors.mutedForeground} />
+            <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+              No songs found
+            </Text>
+          </View>
+        );
+      }
+      return (
+        <View style={{ paddingHorizontal: 8 }}>
+          {songs.slice(0, 30).map((it, i) => (
+            <View key={`${it.url}-${i}`}>{renderSong({ item: it, index: i })}</View>
+          ))}
+        </View>
+      );
+    }
+    if (tab === "albums") {
+      if (albumsLoading) {
+        return (
+          <View style={styles.empty}>
+            <ActivityIndicator color={colors.primary} />
+          </View>
+        );
+      }
+      if (albums.length === 0) {
+        return (
+          <View style={styles.empty}>
+            <Feather name="disc" size={22} color={colors.mutedForeground} />
+            <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+              No albums found
+            </Text>
+          </View>
+        );
+      }
+      return (
+        <View style={styles.albumGrid}>
+          {albums.slice(0, 24).map((it) => (
+            <View key={it.url} style={{ width: "50%" }}>
+              {renderAlbum({ item: it })}
+            </View>
+          ))}
+        </View>
+      );
+    }
+    // tab === "videos"
+    if (videosLoading) {
+      return (
+        <View style={styles.empty}>
+          <ActivityIndicator color={colors.primary} />
+        </View>
+      );
+    }
+    if (videos.length === 0) {
+      return (
+        <View style={styles.empty}>
+          <Feather name="video-off" size={22} color={colors.mutedForeground} />
+          <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+            No videos available
+          </Text>
+        </View>
+      );
+    }
+    return (
+      <View>
+        {videos.slice(0, 30).map((it, i) => (
+          <VideoCard key={`${it.url}-${i}`} item={it} variant="feed" />
+        ))}
+      </View>
+    );
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -134,22 +397,19 @@ export default function ChannelScreen() {
           <Feather name="arrow-left" size={22} color={colors.foreground} />
         </Pressable>
         <Text style={[styles.headerTitle, { color: colors.foreground }]} numberOfLines={1}>
-          {data?.name ?? ""}
+          {displayName}
         </Text>
       </View>
 
-      {channel.isLoading ? (
+      {isLoadingHeader ? (
         <View style={styles.center}>
           <ActivityIndicator color={colors.primary} />
         </View>
-      ) : channel.isError || !data ? (
+      ) : channel.isError && !displayName ? (
         <View style={styles.center}>
           <Feather name="alert-circle" size={28} color={colors.mutedForeground} />
           <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
             Could not load channel
-          </Text>
-          <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-            The artist or channel could not be reached. Please try again.
           </Text>
           <Pressable
             onPress={() => channel.refetch()}
@@ -160,20 +420,10 @@ export default function ChannelScreen() {
         </View>
       ) : (
         <FlatList
-          data={tab === "videos" ? data.relatedStreams ?? [] : []}
-          keyExtractor={(it, idx) => `${it.url}-${idx}`}
-          renderItem={({ item }) => <VideoCard item={item} variant="feed" />}
+          data={[0]}
+          keyExtractor={() => "ch"}
+          renderItem={() => <TabBody />}
           ListHeaderComponent={Header}
-          ListEmptyComponent={
-            tab === "videos" ? (
-              <View style={styles.empty}>
-                <Feather name="video-off" size={22} color={colors.mutedForeground} />
-                <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-                  No videos available
-                </Text>
-              </View>
-            ) : null
-          }
           contentContainerStyle={{ paddingBottom: 140 }}
           showsVerticalScrollIndicator={false}
         />
@@ -207,14 +457,44 @@ const styles = StyleSheet.create({
   avatar: { width: 64, height: 64, borderRadius: 32 },
   name: { fontSize: 20, fontFamily: "Inter_700Bold" },
   sub: { fontSize: 13, fontFamily: "Inter_400Regular", marginTop: 2 },
-  btnRow: { paddingHorizontal: 16, paddingTop: 14 },
-  subBtn: { paddingVertical: 12, borderRadius: 999, alignItems: "center" },
-  subBtnText: { fontSize: 13, fontFamily: "Inter_700Bold", letterSpacing: 0.7 },
-  desc: { fontSize: 13, fontFamily: "Inter_400Regular", paddingHorizontal: 16, paddingTop: 14, lineHeight: 20 },
-  tabsRow: {
-    flexDirection: "row", paddingHorizontal: 8, marginTop: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#33333322",
+  btnRow: {
+    flexDirection: "row",
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    gap: 10,
+    alignItems: "center",
   },
-  tabBtn: { paddingHorizontal: 12, paddingVertical: 12 },
+  subBtn: { flex: 1, paddingVertical: 12, borderRadius: 999, alignItems: "center" },
+  subBtnText: { fontSize: 13, fontFamily: "Inter_700Bold", letterSpacing: 0.7 },
+  playBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 22,
+    paddingVertical: 12,
+    borderRadius: 999,
+  },
+  playBtnText: { color: "#fff", fontSize: 13, fontFamily: "Inter_700Bold" },
+  desc: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 20 },
+  aboutBox: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 20 },
+  tabsRow: {
+    marginTop: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#33333322",
+  },
+  tabBtn: { paddingHorizontal: 14, paddingVertical: 12, alignItems: "center" },
   tabText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  tabUnderline: { height: 2, marginTop: 6, borderRadius: 2 },
+  tabUnderline: { height: 2, marginTop: 6, borderRadius: 2, alignSelf: "stretch" },
+
+  songRow: { flexDirection: "row", alignItems: "center", paddingVertical: 8, gap: 10, paddingHorizontal: 4 },
+  idx: { width: 24, fontSize: 13, fontFamily: "Inter_500Medium", textAlign: "center" },
+  songThumb: { width: 48, height: 48, borderRadius: 6, backgroundColor: "#000" },
+  songTitle: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  songSub: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
+
+  albumGrid: { flexDirection: "row", flexWrap: "wrap", paddingHorizontal: 8, paddingTop: 4 },
+  albumCard: { paddingHorizontal: 6, paddingVertical: 8 },
+  albumArt: { width: "100%", aspectRatio: 1, borderRadius: 8, backgroundColor: "#000" },
+  albumTitle: { fontSize: 13, fontFamily: "Inter_600SemiBold", marginTop: 8 },
+  albumArtist: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
 });
