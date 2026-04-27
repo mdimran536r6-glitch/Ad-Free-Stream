@@ -1,8 +1,15 @@
 import { Platform } from "react-native";
 
 export function apiRoot(): string {
-  if (Platform.OS === "web") return "/api";
   const domain = process.env.EXPO_PUBLIC_DOMAIN;
+  if (Platform.OS === "web") {
+    if (typeof window !== "undefined" && domain) {
+      if (window.location.hostname !== domain) {
+        return `https://${domain}/api`;
+      }
+    }
+    return "/api";
+  }
   if (domain) return `https://${domain}/api`;
   return "/api";
 }
